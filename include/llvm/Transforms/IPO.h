@@ -192,6 +192,7 @@ ModulePass *createMergeFunctionsPass();
 ///
 ModulePass *createPartialInliningPass();
 
+ModulePass *createStackCacheOptPass();
 } // End llvm namespace
 
 #endif

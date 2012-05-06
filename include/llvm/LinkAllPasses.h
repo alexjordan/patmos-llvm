@@ -151,6 +151,8 @@ namespace {
       (void) llvm::createMemDepPrinter();
       (void) llvm::createInstructionSimplifierPass();
 
+      (void) llvm::createStackCacheOptPass();
+
       (void)new llvm::IntervalPartition();
       (void)new llvm::FindUsedTypes();
       (void)new llvm::ScalarEvolution();

@@ -230,6 +230,9 @@ void initializeVerifierPass(PassRegistry&);
 void initializeVirtRegMapPass(PassRegistry&);
 void initializeInstSimplifierPass(PassRegistry&);
 
+void initializeCallSSAPass(PassRegistry&);
+void initializeStackCacheOptPass(PassRegistry&);
+
 }
 
 #endif

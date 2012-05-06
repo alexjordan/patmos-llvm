@@ -17,6 +17,7 @@ add_llvm_library(LLVMipo
   PartialInlining.cpp
   PassManagerBuilder.cpp
   PruneEH.cpp
+  StackCacheOpt.cpp
   StripDeadPrototypes.cpp
   StripSymbols.cpp
   )
