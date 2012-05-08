@@ -31,6 +31,10 @@ public:
     AU.addRequired<CallGraph>();
     AU.setPreservesAll();
   }
+
+  void convertCalls(BasicBlock *dst, const BasicBlock *src, Value *Chain);
+
+
 };
 
 } // End llvm namespace
