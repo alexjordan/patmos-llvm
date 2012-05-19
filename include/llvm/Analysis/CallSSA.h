@@ -14,9 +14,41 @@
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Pass.h"
 
+#include <boost/config.hpp>
+#include <boost/graph/adjacency_list.hpp>
+#include "boost/optional.hpp"
+
 namespace llvm {
 
+namespace cssa {
+struct node_prop_t;
+
+// graph definition
+typedef boost::adjacency_list<boost::listS,
+                              boost::vecS,
+                              boost::bidirectionalS,
+                              node_prop_t
+                             > graph_t;
+
+// graphviz output
+void View(const graph_t& G, const std::string &Name);
+void Write(std::ostream &O, const graph_t& G, const std::string &Name);
+
+// vertex and edge properties
+struct node_prop_t {
+  const llvm::Function *func;
+  std::string str;
+  node_prop_t() : func(NULL) {}
+  node_prop_t(const std::string &s) : func(NULL), str(s) {}
+};
+
+// convenience typdefs
+typedef boost::graph_traits<graph_t>::vertex_descriptor vertex_t;
+}
+
 class CallSSA : public ModulePass {
+  cssa::graph_t Graph;
+  std::map<Value*, const Function*> CallMap;
 public:
   static char ID; // Pass identification, replacement for typeid
   CallSSA() : ModulePass(ID) {
@@ -32,8 +64,12 @@ public:
     AU.setPreservesAll();
   }
 
-  void convertCalls(BasicBlock *dst, const BasicBlock *src, Value *Chain);
+  const cssa::graph_t &getGraph() const { return Graph; }
 
+protected:
+  void convertCalls(BasicBlock *dst, const BasicBlock *src, Value *Chain);
+  void translate(Function &F);
+  boost::optional<cssa::node_prop_t> translateInst(Instruction *I) const;
 
 };
 

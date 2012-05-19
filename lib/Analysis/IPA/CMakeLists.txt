@@ -2,6 +2,7 @@ add_llvm_library(LLVMipa
   CallGraph.cpp
   CallGraphSCCPass.cpp
   CallSSA.cpp
+  CallSSAGraphWriter.cpp
   FindUsedTypes.cpp
   GlobalsModRef.cpp
   IPA.cpp

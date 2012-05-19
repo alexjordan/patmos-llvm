@@ -11,10 +11,13 @@
 #include "llvm/Module.h"
 #include "llvm/Analysis/CallSSA.h"
 #include "llvm/Support/CallSite.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO.h"
 
 using namespace llvm;
+using namespace cssa;
+using namespace boost;
 
 namespace {
 
@@ -46,6 +49,13 @@ ModulePass *llvm::createStackCacheOptPass() { return new StackCacheOpt(); }
 
 bool StackCacheOpt::runOnModule(Module &M) {
   errs() << "FOO Stack cache opt\n";
+  CallSSA &CS = getAnalysis<CallSSA>();
+  graph_t G = CS.getGraph();
+  DEBUG(dbgs() << "#nodes: " << num_vertices(G) << "\n");
+  DEBUG(dbgs() << "#edges: " << num_edges(G) << "\n");
+
+  cssa::View(G, "foo");
+
   return true;
 }
 
