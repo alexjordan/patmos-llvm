@@ -12,6 +12,7 @@
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Analysis/CallGraph.h"
+#include "llvm/Analysis/Dominators.h"
 #include "llvm/Pass.h"
 
 #include <boost/config.hpp>
@@ -61,6 +62,7 @@ public:
   /// getAnalysisUsage - We do not modify anything.
   virtual void getAnalysisUsage(AnalysisUsage &AU) const {
     AU.addRequired<CallGraph>();
+    AU.addRequired<DominatorTree>();
     AU.setPreservesAll();
   }
 

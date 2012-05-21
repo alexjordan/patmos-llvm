@@ -16,6 +16,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/LLVMContext.h"
@@ -44,7 +45,14 @@ bool CallSSA::runOnModule(Module &m) {
   assert(root->getFunction());
   //root->getFunction()->dump();
 
-  Function *Fs = root->getFunction();
+  // the source function
+  Function *Fsrc = root->getFunction();
+  DominatorTree &DT = getAnalysis<DominatorTree>(*Fsrc);
+
+  // backedges in the source function
+  typedef std::pair<const BasicBlock*, const BasicBlock*> Edge_t;
+  SmallVector<Edge_t, 32> BEs;
+  FindFunctionBackedges(*Fsrc, BEs);
 
   LLVMContext &C = getGlobalContext();
   Module *M = new Module("callSSA", getGlobalContext());
@@ -57,7 +65,7 @@ bool CallSSA::runOnModule(Module &m) {
 
   // create all blocks and map them to the original ones
   BOOST_FOREACH(const BasicBlock &rBB,
-                std::make_pair(Fs->begin(), Fs->end())) {
+                std::make_pair(Fsrc->begin(), Fsrc->end())) {
     const BasicBlock *BB = &rBB;
     BasicBlock *newBB = BasicBlock::Create(C, BB->getName(), F);
     BBmap[BB] = newBB;
@@ -70,9 +78,12 @@ bool CallSSA::runOnModule(Module &m) {
   Chain = bld.CreateAlloca(chainType, 0, "chain.addr");
   }
 
+  // backedges need to be processed separately
+  std::list<Use*> BEUses;
+
   // populate all blocks with calls and control flow
   BOOST_FOREACH(const BasicBlock &rBB,
-                std::make_pair(Fs->begin(), Fs->end())) {
+                std::make_pair(Fsrc->begin(), Fsrc->end())) {
     const BasicBlock *BB = &rBB;
     BasicBlock *newBB = BBmap[BB];
     IRBuilder<> bld(newBB);
@@ -94,9 +105,27 @@ bool CallSSA::runOnModule(Module &m) {
     Instruction *I = BI->clone();
     BOOST_FOREACH(Use &U, std::make_pair(I->op_begin(), I->op_end())) {
       if (BasicBlock *dst = dyn_cast<BasicBlock>(U.get())) {
-          errs() << "redirecting from: " << U.get()->getName();
-          errs() << " to: " << BBmap[dst]->getName() << "\n";
-          U.set(BBmap[dst]);
+        // redirect branch to block in the new function
+        BasicBlock *mappedDst = BBmap[dst];
+
+        // unwind backedges
+        Edge_t e = std::make_pair(BB, dst);
+        if (std::find(BEs.begin(), BEs.end(), e) != BEs.end()) {
+          errs() << "BE head: " << dst->getName() << "\n";
+          const BranchInst *BI = dyn_cast<BranchInst>(dst->getTerminator());
+          assert(BI && BI->isConditional());
+          BasicBlock *loopSucc = BI->getSuccessor(0);
+          BasicBlock *exitSucc = BI->getSuccessor(1);
+          if (!DT.dominates(loopSucc, BB))
+            std::swap(loopSucc, exitSucc);
+          assert(DT.dominates(loopSucc, BB));
+          errs() << "BE: " << loopSucc->getName() << " dominates loop source\n";
+          mappedDst = BBmap[exitSucc];
+        }
+
+        errs() << "redirecting from: " << U.get()->getName();
+        errs() << " to: " << mappedDst->getName() << "\n";
+        U.set(mappedDst);
       } else {
         U.set(UndefValue::get(bld.getInt1Ty()));
       }
