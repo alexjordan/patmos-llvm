@@ -14,6 +14,7 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -45,7 +46,31 @@ struct MachineFunctionPrinterPass : public MachineFunctionPass {
   }
 };
 
+struct MachineFrameInfoPrinterPass : public MachineFunctionPass {
+  static char ID;
+
+  raw_ostream &OS;
+  const std::string Banner;
+
+  MachineFrameInfoPrinterPass(raw_ostream &os, const std::string &banner) 
+      : MachineFunctionPass(ID), OS(os), Banner(banner) {}
+
+  const char *getPassName() const { return "MFI Printer"; }
+
+  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    AU.setPreservesAll();
+    MachineFunctionPass::getAnalysisUsage(AU);
+  }
+
+  bool runOnMachineFunction(MachineFunction &MF) {
+    OS << "# " << Banner << ":\n";
+    MF.getFrameInfo()->print(MF, OS);
+    return false;
+  }
+};
+
 char MachineFunctionPrinterPass::ID = 0;
+char MachineFrameInfoPrinterPass::ID = 0;
 }
 
 namespace llvm {
@@ -55,6 +80,11 @@ namespace llvm {
 MachineFunctionPass *createMachineFunctionPrinterPass(raw_ostream &OS,
                                                       const std::string &Banner){
   return new MachineFunctionPrinterPass(OS, Banner);
+}
+
+MachineFunctionPass *createMachineFrameInfoPrinterPass(raw_ostream &OS,
+                                                       const std::string &Banner){
+  return new MachineFrameInfoPrinterPass(OS, Banner);
 }
 
 }

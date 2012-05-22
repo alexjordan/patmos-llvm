@@ -41,6 +41,10 @@ namespace llvm {
   createMachineFunctionPrinterPass(raw_ostream &OS,
                                    const std::string &Banner ="");
 
+  MachineFunctionPass *
+  createMachineFrameInfoPrinterPass(raw_ostream &OS,
+									const std::string &Banner ="");
+
   /// MachineLoopInfo pass - This pass is a loop analysis pass.
   ///
   extern char &MachineLoopInfoID;

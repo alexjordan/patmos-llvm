@@ -32,6 +32,7 @@ using namespace llvm;
 namespace {
   class StackFeedback : public MachineFunctionPass {
     MachineFeedback *MFB;
+    MachineFrameInfo *MFI;
   public:
     static char ID; // Pass identification
     StackFeedback(MachineFeedback *mfb = NULL) :
@@ -69,10 +70,10 @@ bool StackFeedback::runOnMachineFunction(MachineFunction &MF) {
              << "********** Function: " 
              << MF.getFunction()->getName() << '\n';
     });
-  MFB->foo = "foobar";
 
-#if 0
   MFI = MF.getFrameInfo();
+  MFB->StackSizes[MF.getFunction()] = MFI->getStackSize();
+#if 0
   MRI = &MF.getRegInfo(); 
   TII = MF.getTarget().getInstrInfo();
   TRI = MF.getTarget().getRegisterInfo();

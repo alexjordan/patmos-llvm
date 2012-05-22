@@ -16,11 +16,14 @@
 
 #include "llvm/MC/MCCodeGenInfo.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/DataTypes.h"
 #include <cassert>
 #include <string>
+#include <map>
 
 namespace llvm {
 
+class Function;
 class InstrItineraryData;
 class JITCodeEmitter;
 class MCAsmInfo;
@@ -64,7 +67,8 @@ namespace Sched {
 }
 
 struct MachineFeedback {
-  std::string foo;
+  std::map<const Function*, uint64_t> StackSizes;
+  void dump() const;
 };
 
 //===----------------------------------------------------------------------===//
