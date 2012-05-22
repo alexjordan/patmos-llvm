@@ -232,6 +232,7 @@ void initializeInstSimplifierPass(PassRegistry&);
 
 void initializeCallSSAPass(PassRegistry&);
 void initializeStackCacheOptPass(PassRegistry&);
+void initializeStackFeedbackPass(PassRegistry&);
 
 }
 

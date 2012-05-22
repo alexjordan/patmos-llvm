@@ -234,6 +234,7 @@ namespace llvm {
   ///
   FunctionPass *createExecutionDependencyFixPass(const TargetRegisterClass *RC);
 
+  FunctionPass *createFeedbackPass(TargetMachine &tm);
 } // End llvm namespace
 
 #endif

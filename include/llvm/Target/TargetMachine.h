@@ -63,6 +63,10 @@ namespace Sched {
   };
 }
 
+struct MachineFeedback {
+  std::string foo;
+};
+
 //===----------------------------------------------------------------------===//
 ///
 /// TargetMachine - Primary interface to the complete machine description for
@@ -102,6 +106,7 @@ protected: // Can only create subclasses.
   unsigned MCUseLoc : 1;
   unsigned MCUseCFI : 1;
 
+  MachineFeedback MFB;
 public:
   virtual ~TargetMachine();
 
@@ -277,6 +282,8 @@ public:
                                  bool = true) {
     return true;
   }
+
+  MachineFeedback &getFeedback() { return MFB; }
 };
 
 /// LLVMTargetMachine - This class describes a target machine that is

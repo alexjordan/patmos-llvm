@@ -490,6 +490,8 @@ bool LLVMTargetMachine::addCommonCodeGenPasses(PassManagerBase &PM,
     printNoVerify(PM, "After CodePlacementOpt");
   }
 
+  PM.add(createFeedbackPass(*this));
+
   if (addPreEmitPass(PM, OptLevel))
     printNoVerify(PM, "After PreEmit passes");
 

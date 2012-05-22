@@ -470,5 +470,7 @@ int main(int argc, char **argv) {
 
   PM.run(*M.get());
 
+  MachineFeedback &MFB = TM.getFeedback();
+  errs() << "Feedback from codegen: " << MFB.foo << "\n";
   return 0;
 }
