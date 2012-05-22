@@ -56,8 +56,8 @@ public:
     initializeCallSSAPass(*PassRegistry::getPassRegistry());
   }
 
-  /// run - This incorporates all types used by the specified module
   bool runOnModule(Module &M);
+  bool runOnFunction(Function &F);
 
   /// getAnalysisUsage - We do not modify anything.
   virtual void getAnalysisUsage(AnalysisUsage &AU) const {
@@ -70,7 +70,7 @@ public:
 
 protected:
   void convertCalls(BasicBlock *dst, const BasicBlock *src, Value *Chain);
-  void translate(Function &F);
+  void translate(cssa::graph_t &G, Function &F);
   boost::optional<cssa::node_prop_t> translateInst(Instruction *I) const;
 
 };

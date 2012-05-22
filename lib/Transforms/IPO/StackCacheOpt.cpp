@@ -54,7 +54,7 @@ bool StackCacheOpt::runOnModule(Module &M) {
   DEBUG(dbgs() << "#nodes: " << num_vertices(G) << "\n");
   DEBUG(dbgs() << "#edges: " << num_edges(G) << "\n");
 
-  cssa::View(G, "foo");
+  //cssa::View(G, "foo");
 
   return true;
 }
