@@ -16,10 +16,9 @@
 
 #include "llvm/MC/MCCodeGenInfo.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/DataTypes.h"
+#include "llvm/MachineFeedbackHack.h"
 #include <cassert>
 #include <string>
-#include <map>
 
 namespace llvm {
 
@@ -65,11 +64,6 @@ namespace Sched {
     ILP               // Scheduling for ILP in low register pressure mode.
   };
 }
-
-struct MachineFeedback {
-  std::map<const Function*, uint64_t> StackSizes;
-  void dump() const;
-};
 
 //===----------------------------------------------------------------------===//
 ///

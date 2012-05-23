@@ -9,6 +9,7 @@
 
 #include "llvm/Function.h"
 #include "llvm/Module.h"
+#include "llvm/Analysis/StackCache.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/LiveIntervalAnalysis.h"
 #include "llvm/CodeGen/LiveStackAnalysis.h"
@@ -72,7 +73,7 @@ bool StackFeedback::runOnMachineFunction(MachineFunction &MF) {
     });
 
   MFI = MF.getFrameInfo();
-  MFB->StackSizes[MF.getFunction()] = MFI->getStackSize();
+  MFB->getStackInfo()->StackSizes[MF.getFunction()] = MFI->getStackSize();
 #if 0
   MRI = &MF.getRegInfo(); 
   TII = MF.getTarget().getInstrInfo();

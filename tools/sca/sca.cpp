@@ -430,8 +430,6 @@ int main(int argc, char **argv) {
   // Build up all of the passes that we want to do to the module.
   PassManager PM;
 
-  //PM.add(createStackCacheOptPass());
-
   Triple TheTriple;
   Triple::ArchType Type = Triple::getArchTypeForLLVMName("ppc32");
   assert(Type != Triple::UnknownArch);
@@ -472,5 +470,10 @@ int main(int argc, char **argv) {
 
   MachineFeedback &MFB = TM.getFeedback();
   MFB.dump();
+
+  PassManager PM2;
+  PM2.add(createStackCacheAnalysisPass(MFB.getStackInfo()));
+  PM2.run(*M.get());
+
   return 0;
 }

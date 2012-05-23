@@ -18,6 +18,7 @@ add_llvm_library(LLVMipo
   PassManagerBuilder.cpp
   PruneEH.cpp
   StackCacheOpt.cpp
+  StackCacheAnalysis.cpp
   StripDeadPrototypes.cpp
   StripSymbols.cpp
   )

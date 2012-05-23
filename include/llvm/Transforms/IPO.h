@@ -24,6 +24,7 @@ class Pass;
 class Function;
 class BasicBlock;
 class GlobalValue;
+class SCStackInfo;
 
 //===----------------------------------------------------------------------===//
 //
@@ -193,6 +194,7 @@ ModulePass *createMergeFunctionsPass();
 ModulePass *createPartialInliningPass();
 
 ModulePass *createStackCacheOptPass();
+ModulePass *createStackCacheAnalysisPass(SCStackInfo *SCSI);
 } // End llvm namespace
 
 #endif

@@ -17,8 +17,6 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Debug.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Function.h"
 using namespace llvm;
 
@@ -284,11 +282,4 @@ namespace llvm {
   StringRef getTrapFunctionName() {
     return TrapFuncName;
   }
-}
-
-void MachineFeedback::dump() const {
-  dbgs() << "Stack size per function:\n";
-  for (std::map<const Function*, uint64_t>::const_iterator I = StackSizes.begin(),
-       E = StackSizes.end(); I != E; ++I)
-    dbgs() << I->first->getName() << ": " << I->second << "\n";
 }
