@@ -16,8 +16,10 @@
 namespace llvm {
   class Function;
 
-  struct SCStackInfo {
-    std::map<const Function*, uint64_t> StackSizes;
+  class SCStackInfo {
+  public:
+    typedef std::map<const Function*, uint64_t> ssmap_t;
+    ssmap_t StackSizes;
     void dump() const;
   };
 } // End llvm namespace

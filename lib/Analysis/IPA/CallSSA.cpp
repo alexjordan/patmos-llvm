@@ -40,6 +40,7 @@ INITIALIZE_PASS_END(CallSSA, "callssa",
                 "Interprocedural control flow with calls", true, true)
 
 bool CallSSA::runOnModule(Module &m) {
+#if 0
   CallGraph& CG = getAnalysis<CallGraph>();
 
   typedef CallGraphNode CGN;
@@ -101,7 +102,7 @@ bool CallSSA::runOnModule(Module &m) {
       runOnFunction(*cgn->getFunction());
     }
   }
-
+#endif
   return false;
 }
 

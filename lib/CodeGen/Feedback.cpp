@@ -66,11 +66,6 @@ FunctionPass *llvm::createFeedbackPass(TargetMachine &tm) {
 }
 
 bool StackFeedback::runOnMachineFunction(MachineFunction &MF) {
-  DEBUG({
-      dbgs() << "********** Stack Feedback **********\n"
-             << "********** Function: " 
-             << MF.getFunction()->getName() << '\n';
-    });
 
   MFI = MF.getFrameInfo();
   MFB->getStackInfo()->StackSizes[MF.getFunction()] = MFI->getStackSize();
