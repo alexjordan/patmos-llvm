@@ -6,7 +6,7 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-
+#define DEBUG_TYPE "sca"
 #include "llvm/Function.h"
 #include "llvm/Module.h"
 #include "llvm/Analysis/StackCache.h"
@@ -29,6 +29,11 @@
 #include "llvm/ADT/Statistic.h"
 #include <vector>
 using namespace llvm;
+
+STATISTIC(NumFixed,      "Number of fixed stack objects");
+STATISTIC(NumSpills,     "Number of spill slot stack objects");
+STATISTIC(NumTemps,      "Number of temporary stack objects");
+STATISTIC(NumVariable,   "Number of variable sized stack objects");
 
 namespace {
   class StackFeedback : public MachineFunctionPass {
@@ -67,56 +72,30 @@ FunctionPass *llvm::createFeedbackPass(TargetMachine &tm) {
 
 bool StackFeedback::runOnMachineFunction(MachineFunction &MF) {
 
+  int64_t StackSize = 0;
   MFI = MF.getFrameInfo();
-  MFB->getStackInfo()->StackSizes[MF.getFunction()] = MFI->getStackSize();
-#if 0
-  MRI = &MF.getRegInfo(); 
-  TII = MF.getTarget().getInstrInfo();
-  TRI = MF.getTarget().getRegisterInfo();
-  LS = &getAnalysis<LiveStacks>();
-  VRM = &getAnalysis<VirtRegMap>();
-  loopInfo = &getAnalysis<MachineLoopInfo>();
 
-  bool Changed = false;
+  for (int i = MFI->getObjectIndexBegin(), e = MFI->getObjectIndexEnd();
+       i != e; ++i) {
+    if (MFI->isDeadObjectIndex(i))
+      continue; // don't add to stack size
 
-  unsigned NumSlots = LS->getNumIntervals();
-  if (NumSlots < 2) {
-    if (NumSlots == 0 || !VRM->HasUnusedRegisters())
-      // Nothing to do!
-      return false;
+    int64_t sz = MFI->getObjectSize(i);
+    if (sz == 0) {
+      ++NumVariable;
+    } else if (MFI->isFixedObjectIndex(i)) {
+      ++NumFixed; // don't add to stack size
+      continue;
+    } else if (MFI->isSpillSlotObjectIndex(i)) {
+      ++NumSpills;
+    } else if (MFI->isTemporaryObjectIndex(i)) {
+      ++NumTemps;
+    }
+
+    StackSize += sz;
   }
 
-  // If there are calls to setjmp or sigsetjmp, don't perform stack slot
-  // coloring. The stack could be modified before the longjmp is executed,
-  // resulting in the wrong value being used afterwards. (See
-  // <rdar://problem/8007500>.)
-  if (MF.callsSetJmp())
-    return false;
+  MFB->getStackInfo()->StackSizes[MF.getFunction()] = StackSize;
 
-  // Gather spill slot references
-  ScanForSpillSlotRefs(MF);
-  InitializeSlots();
-  Changed = ColorSlots(MF);
-
-  NextColor = -1;
-  SSIntervals.clear();
-  for (unsigned i = 0, e = SSRefs.size(); i != e; ++i)
-    SSRefs[i].clear();
-  SSRefs.clear();
-  OrigAlignments.clear();
-  OrigSizes.clear();
-  AllColors.clear();
-  UsedColors.clear();
-  for (unsigned i = 0, e = Assignments.size(); i != e; ++i)
-    Assignments[i].clear();
-  Assignments.clear();
-
-  if (Changed) {
-    for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I)
-      Changed |= RemoveDeadStores(I);
-  }
-
-  return Changed;
-#endif
   return false;
 }
