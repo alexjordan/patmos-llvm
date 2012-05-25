@@ -22,7 +22,6 @@
 
 namespace llvm {
 
-class Function;
 class InstrItineraryData;
 class JITCodeEmitter;
 class MCAsmInfo;

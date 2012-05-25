@@ -17,7 +17,6 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Function.h"
 using namespace llvm;
 
 //---------------------------------------------------------------------------
