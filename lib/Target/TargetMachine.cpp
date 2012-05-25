@@ -26,6 +26,7 @@ using namespace llvm;
 namespace llvm {
   bool LessPreciseFPMADOption;
   bool PrintMachineCode;
+  bool PrintMachineFrames;
   bool NoFramePointerElim;
   bool NoFramePointerElimNonLeaf;
   bool NoExcessFPPrecision;
@@ -54,6 +55,10 @@ static cl::opt<bool, true>
 PrintCode("print-machineinstrs",
   cl::desc("Print generated machine code"),
   cl::location(PrintMachineCode), cl::init(false));
+static cl::opt<bool, true>
+PrintFrame("print-machineframes",
+  cl::desc("Print machine frame info"),
+  cl::location(PrintMachineFrames), cl::init(false));
 static cl::opt<bool, true>
 DisableFPElim("disable-fp-elim",
   cl::desc("Disable frame pointer elimination optimization"),

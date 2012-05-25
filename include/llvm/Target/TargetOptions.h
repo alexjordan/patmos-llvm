@@ -32,6 +32,9 @@ namespace llvm {
   /// output from the code generator.
   extern bool PrintMachineCode;
 
+  // for printing the stack frame info at several points
+  extern bool PrintMachineFrames;
+
   /// NoFramePointerElim - This flag is enabled when the -disable-fp-elim is
   /// specified on the command line.  If the target supports the frame pointer
   /// elimination optimization, this option should disable it.

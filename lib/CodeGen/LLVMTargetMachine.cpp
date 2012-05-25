@@ -386,7 +386,8 @@ bool LLVMTargetMachine::addCommonCodeGenPasses(PassManagerBase &PM,
   // Print the instruction selected machine code...
   printAndVerify(PM, "After Instruction Selection");
 
-  PM.add(createMachineFrameInfoPrinterPass(dbgs(), "After ISel"));
+  if (PrintMachineFrames)
+    PM.add(createMachineFrameInfoPrinterPass(dbgs(), "After ISel"));
 
   // Expand pseudo-instructions emitted by ISel.
   PM.add(createExpandISelPseudosPass());
@@ -460,7 +461,8 @@ bool LLVMTargetMachine::addCommonCodeGenPasses(PassManagerBase &PM,
   PM.add(createPrologEpilogCodeInserter());
   printAndVerify(PM, "After PrologEpilogCodeInserter");
 
-  PM.add(createMachineFrameInfoPrinterPass(dbgs(), "After prologue/epilogue"));
+  if (PrintMachineFrames)
+    PM.add(createMachineFrameInfoPrinterPass(dbgs(), "After prologue/epilogue"));
 
   // Run pre-sched2 passes.
   if (addPreSched2(PM, OptLevel))
