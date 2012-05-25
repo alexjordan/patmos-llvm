@@ -16,6 +16,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Function.h"
 
 using namespace llvm;
 
@@ -63,8 +64,29 @@ struct MachineFrameInfoPrinterPass : public MachineFunctionPass {
   }
 
   bool runOnMachineFunction(MachineFunction &MF) {
-    OS << "# " << Banner << ":\n";
-    MF.getFrameInfo()->print(MF, OS);
+    OS << "# Frame info for function " << MF.getFunction()->getName()
+      << " (" << Banner << "): ";
+    const MachineFrameInfo *MFI = MF.getFrameInfo();
+    MFI->print(MF, OS);
+    if (!MFI->hasStackObjects())
+      OS << "..has no stack objects\n";
+    if (MFI->isFrameAddressTaken())
+      OS << "..frame address taken\n";
+
+    int nSpills = 0, nTemps = 0;
+    for (int i = MFI->getObjectIndexBegin(), e = MFI->getObjectIndexEnd();
+         i != e; ++i) {
+      if (MFI->isSpillSlotObjectIndex(i))
+        ++nSpills;
+      else if (MFI->isTemporaryObjectIndex(i))
+        ++nTemps;
+    }
+
+    if (nSpills)
+      OS << "..number of spills: " << nSpills << "\n";
+
+    if (nTemps)
+      OS << "..number of temps: " << nTemps << "\n";
     return false;
   }
 };

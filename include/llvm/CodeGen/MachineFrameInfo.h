@@ -107,10 +107,15 @@ class MachineFrameInfo {
     // block and doesn't need additional handling for allocation beyond that.
     bool PreAllocated;
 
+    // ajo: keep track of objects allocated as temporary (we assume these do not
+    // escape).
+    bool isTemporary;
+
     StackObject(uint64_t Sz, unsigned Al, int64_t SP, bool IM,
                 bool isSS, bool NSP)
       : SPOffset(SP), Size(Sz), Alignment(Al), isImmutable(IM),
-        isSpillSlot(isSS), MayNeedSP(NSP), PreAllocated(false) {}
+        isSpillSlot(isSS), MayNeedSP(NSP), PreAllocated(false),
+        isTemporary(false) {}
   };
 
   /// Objects - The list of stack objects allocated...
@@ -468,6 +473,12 @@ public:
     return Objects[ObjectIdx+NumFixedObjects].isSpillSlot;;
   }
 
+  bool isTemporaryObjectIndex(int ObjectIdx) const {
+    assert(unsigned(ObjectIdx+NumFixedObjects) < Objects.size() &&
+           "Invalid Object Idx!");
+    return Objects[ObjectIdx+NumFixedObjects].isTemporary;
+  }
+
   /// isDeadObjectIndex - Returns true if the specified index corresponds to
   /// a dead object.
   bool isDeadObjectIndex(int ObjectIdx) const {
@@ -486,6 +497,12 @@ public:
     int Index = (int)Objects.size() - NumFixedObjects - 1;
     assert(Index >= 0 && "Bad frame index!");
     MaxAlignment = std::max(MaxAlignment, Alignment);
+    return Index;
+  }
+
+  int CreateTemporaryStackObject(uint64_t Size, unsigned Alignment) {
+    int Index = CreateStackObject(Size, Alignment, false);
+    Objects.back().isTemporary = true;
     return Index;
   }
 

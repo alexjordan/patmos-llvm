@@ -1459,7 +1459,7 @@ SDValue SelectionDAG::CreateStackTemporary(EVT VT, unsigned minAlign) {
   unsigned StackAlign =
   std::max((unsigned)TLI.getTargetData()->getPrefTypeAlignment(Ty), minAlign);
 
-  int FrameIdx = FrameInfo->CreateStackObject(ByteSize, StackAlign, false);
+  int FrameIdx = FrameInfo->CreateTemporaryStackObject(ByteSize, StackAlign);
   return getFrameIndex(FrameIdx, TLI.getPointerTy());
 }
 
@@ -1475,7 +1475,7 @@ SDValue SelectionDAG::CreateStackTemporary(EVT VT1, EVT VT2) {
                             TD->getPrefTypeAlignment(Ty2));
 
   MachineFrameInfo *FrameInfo = getMachineFunction().getFrameInfo();
-  int FrameIdx = FrameInfo->CreateStackObject(Bytes, Align, false);
+  int FrameIdx = FrameInfo->CreateTemporaryStackObject(Bytes, Align);
   return getFrameIndex(FrameIdx, TLI.getPointerTy());
 }
 
