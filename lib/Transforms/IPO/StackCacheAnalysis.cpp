@@ -131,10 +131,15 @@ void StackCacheAnalysis::bottomUp(Module &M) {
         MaxStack[cgn] = unlimited;
       }
     }
-    DEBUG(dbgs() << "SCC #" << SCCs.size() << " (" << scc.size() << "):\n");
-    SCCs.push_back(*I);
-    BOOST_FOREACH(CGN *n, SCCs.back())
-      DEBUG(n->dump());
+    //DEBUG(dbgs() << "SCC #" << SCCs.size() << " (" << scc.size() << "):\n");
+    //SCCs.push_back(*I);
+    //BOOST_FOREACH(CGN *n, scc) {
+    //  if (Function *F = n->getFunction())
+    //    DEBUG(dbgs() << "Call graph node for function: '"
+    //          << F->getName() << "'");
+    //  else
+    //    DEBUG(dbgs() << "Call graph node <<null function>>");
+    //}
   }
 
   // traversal
@@ -153,6 +158,7 @@ void StackCacheAnalysis::bottomUp(Module &M) {
       if (succ == CG.getExternalCallingNode() ||
           succ == CG.getCallsExternalNode()) {
         DEBUG(dbgs() << "skipping ext-node\n");
+        MaxStack[succ] = 0;
         continue;
       }
       //if (succ->getFunction()->isDeclaration()) {
@@ -163,7 +169,8 @@ void StackCacheAnalysis::bottomUp(Module &M) {
       pendingChildren = true;
     }
     if (!pendingChildren) {
-      cgn->dump();
+      DEBUG(dbgs() << "traversal @ ");
+      DEBUG(cgn->dump());
       Seen.insert(cgn);
       Stack.pop();
 
@@ -200,7 +207,8 @@ void StackCacheAnalysis::bottomUp(Module &M) {
   dbgs() << "Max stack depth:\n";
   for (maxstack_t::const_iterator I = MaxStack.begin(),
        E = MaxStack.end(); I != E; ++I)
-    dbgs() << I->first->getFunction()->getName() << ": " << I->second << "\n";
+    if (Function *F = I->first->getFunction())
+      dbgs() << F->getName() << ": " << I->second << "\n";
 }
 
 namespace {
