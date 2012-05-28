@@ -29,18 +29,110 @@ namespace {
   struct StackSize {
     uint64_t sz;
     StackSize(uint64_t s = 0) : sz(s) {}
+    void operator+= (const StackSize &RHS);
+    friend bool operator== (const StackSize &LHS, const StackSize &RHS);
+    friend bool operator< (const StackSize &LHS, const StackSize &RHS);
     friend StackSize operator+ (const StackSize &LHS, const StackSize &RHS);
+    friend raw_ostream& operator<< (raw_ostream &os, const StackSize &ss);
   };
 
-  raw_ostream& operator<<(raw_ostream &os, const StackSize &ss);
+  struct StackState {
+    StackSize reserved;
+    StackState(int res = 0) : reserved(res) {}
 
+    StackState reserve(const StackSize &ss) {
+      StackState newSS(*this);
+      newSS.reserved += ss;
+      return newSS;
+    }
 
+    bool operator==(const StackState &RHS) const {
+      return (reserved == RHS.reserved);
+    }
+    bool operator<(const StackState &RHS) const {
+      return reserved < RHS.reserved;
+    }
+    friend raw_ostream& operator<<(raw_ostream &os, const StackState &ss);
+  };
+
+  class AnalysisNode;
+  class ReserveNode;
+  class FreeNode;
+  class CallNode;
+
+  class AnalysisVisitor {
+  public:
+    virtual ~AnalysisVisitor() {}
+    virtual void visit(ReserveNode *n) = 0;
+    virtual void visit(FreeNode *n) = 0;
+    virtual void visit(CallNode *n) = 0;
+  };
+
+  typedef std::vector<AnalysisNode*> an_map_t;
+
+  class AnalysisNode {
+    StackState inState;
+    StackState outState;
+    an_map_t &AM;
+  public:
+    vertex_t v;
+    graph_t &G;
+    AnalysisNode(vertex_t v, graph_t &G, an_map_t &AM)
+      : AM(AM), v(v), G(G) {}
+    virtual ~AnalysisNode() {}
+    StackState getInState() const { return inState; }
+    StackState getOutState() const { return outState; }
+    void setInState(const StackState &ss) { inState = ss; }
+    void setOutState(const StackState &ss) { outState = ss; }
+    const AnalysisNode *getNode(vertex_t v) const { return AM[v]; }
+    AnalysisNode *getNode(vertex_t v) { return AM[v]; }
+    const Function *getFunction() { return G[graph_bundle].F; }
+    virtual void setCaller(AnalysisNode *N) {}
+    virtual void accept(AnalysisVisitor *visitor) = 0;
+    virtual StackState calcInState() const;
+    bool updateInState();
+    bool updateOutState(const StackState &ss);
+  };
+
+  class ReserveNode : public AnalysisNode {
+    AnalysisNode *Caller;
+  public:
+    ReserveNode(vertex_t v, graph_t &G, an_map_t &AM)
+      : AnalysisNode(v,G,AM), Caller(NULL) {}
+    void accept(AnalysisVisitor *visitor) { visitor->visit(this); }
+    virtual void setCaller(AnalysisNode *N) { Caller = N; }
+    StackState calcInState() const;
+  };
+  class FreeNode : public AnalysisNode {
+    AnalysisNode *Caller;
+  public:
+    FreeNode(vertex_t v, graph_t &G, an_map_t &AM)
+      : AnalysisNode(v,G,AM), Caller(NULL) {}
+    void accept(AnalysisVisitor *visitor) { visitor->visit(this); }
+    virtual void setCaller(AnalysisNode *N) { Caller = N; }
+    AnalysisNode *getCaller() { return Caller; }
+  };
+  class CallNode : public AnalysisNode {
+  public:
+    CallNode(vertex_t v, graph_t &G, an_map_t &AM) : AnalysisNode(v,G,AM) {}
+    void accept(AnalysisVisitor *visitor) { visitor->visit(this); }
+  };
+
+  typedef GraphTraits<CallGraphNode*> CGT;
   typedef CallGraphNode CGN;
   typedef std::map<CGN*, StackSize> maxstack_t;
 
-  class StackCacheAnalysis : public ModulePass {
+  class StackCacheAnalysis : public ModulePass, public AnalysisVisitor {
     SCStackInfo *SCSI;
-    maxstack_t MaxStack;
+    maxstack_t MaxStack;        // accumulated stack depth
+    std::set<CGN*> Blacklist;   // nodes we don't want to visit
+
+    // topdown traversal stuff
+    typedef std::map<const Function*, graph_t> graph_cache_t;
+    typedef std::list<AnalysisNode*> worklist_t;
+    graph_cache_t GraphCache;
+    worklist_t Worklist;
+    std::list<std::vector<AnalysisNode*> > AllNodeMaps;
   public:
     StackCacheAnalysis(SCStackInfo *scsi = NULL)
       : ModulePass(ID), SCSI(scsi) {
@@ -51,10 +143,19 @@ namespace {
     bool runOnModule(Module &M);
 
     void bottomUp(Module &M);
+    void topDown(Module &M);
+
+    // topdown related..
+    static AnalysisNode *makeNode(vertex_t v, graph_t &G, an_map_t &AM);
+    graph_t &getGraph(const Function *F);
+    void visit(ReserveNode *N);
+    void visit(FreeNode *N);
+    void visit(CallNode *N);
 
     void getAnalysisUsage(AnalysisUsage& AU) const {
       AU.addRequired<CallSSA>();
       AU.addRequired<CallGraph>();
+      AU.addRequired<DominatorTree>();
       AU.setPreservesAll();
     }
 
@@ -94,6 +195,7 @@ bool StackCacheAnalysis::runOnModule(Module &M) {
 
   //cssa::View(G, "foo");
   bottomUp(M);
+  topDown(M);
 
   return true;
 }
@@ -103,13 +205,11 @@ void StackCacheAnalysis::bottomUp(Module &M) {
   assert(SCSI);
   SCStackInfo::ssmap_t &StackSizes = SCSI->StackSizes;
 
-  typedef GraphTraits<CallGraphNode*> CGT;
   CGN *root = CG.getRoot();
   assert(root->getFunction());
 
   typedef std::vector<CGN*> scc_t;
   std::vector<scc_t> SCCs;
-  std::set<CGN*> Blacklist;
   for (scc_iterator<CallGraph*> I = scc_begin(&CG), E = scc_end(&CG); I != E;
        ++I) {
     scc_t &scc = *I;
@@ -180,6 +280,7 @@ void StackCacheAnalysis::bottomUp(Module &M) {
         DEBUG(dbgs() << "function declaration '" << func->getName()
               << "' -> assuming stack size 0.\n");
         MaxStack[cgn] = 0;
+        Blacklist.insert(cgn);
         continue;
       }
 
@@ -211,12 +312,160 @@ void StackCacheAnalysis::bottomUp(Module &M) {
       dbgs() << F->getName() << ": " << I->second << "\n";
 }
 
+void StackCacheAnalysis::topDown(Module &M) {
+  CallGraph& CG = getAnalysis<CallGraph>();
+  CGN *root = CG.getRoot();
+  Function *F = root->getFunction();
+  assert(F);
+
+
+  // traversal
+
+  graph_t &G = getGraph(F);
+  AllNodeMaps.push_back(std::vector<AnalysisNode*>());
+  std::vector<AnalysisNode*> &ANs = AllNodeMaps.back();
+  ANs.resize(num_vertices(G));
+  BOOST_FOREACH(vertex_t v, vertices(G)) {
+    ANs[v] = makeNode(v, G, ANs);
+  }
+
+  // kick off propagation
+  ANs[G[graph_bundle].s]->setInState(StackState(-1));
+  Worklist.push_back(ANs[G[graph_bundle].s]);
+
+  while (Worklist.size()) {
+    AnalysisNode *N = Worklist.front();
+    Worklist.pop_front();
+    N->accept(this);
+  }
+
+  //BOOST_FOREACH(AnalysisNode *n, ANs)
+  //  delete n;
+}
+
+AnalysisNode *StackCacheAnalysis::makeNode(vertex_t v,
+                                           graph_t &G,
+                                           an_map_t &AM) {
+  if (v == G[graph_bundle].s)
+    return new ReserveNode(v,G,AM);
+  else if (v == G[graph_bundle].t)
+    return new FreeNode(v,G,AM);
+  else
+    return new CallNode(v,G,AM);
+}
+
+void StackCacheAnalysis::visit(ReserveNode *N) {
+  SCStackInfo::ssmap_t &StackSizes = SCSI->StackSizes;
+  dbgs() << "visit: s\n";
+  if (!N->updateInState())
+    return;
+  if (!N->updateOutState(N->getInState().reserve(StackSizes[N->getFunction()])))
+    return;
+
+  BOOST_FOREACH(vertex_t w, adjacent_vertices(N->v, N->G))
+    Worklist.push_back(N->getNode(w));
+}
+
+void StackCacheAnalysis::visit(FreeNode *N) {
+  dbgs() << "visit: t\n";
+  if (AnalysisNode *C = N->getCaller())
+    Worklist.push_back(C);
+}
+
+void StackCacheAnalysis::visit(CallNode *N) {
+  const Function *F = N->G[N->v].func;
+
+  DEBUG(dbgs() << "visit: call " << F->getName() << "\n");
+  if (!N->updateInState())
+    return;
+
+  CallGraph& CG = getAnalysis<CallGraph>();
+  if (Blacklist.count(CG[F])) {
+    DEBUG(dbgs() << "visit: ..skipping call\n");
+    if (!N->updateOutState(N->getInState()))
+      return;
+    BOOST_FOREACH(vertex_t w, adjacent_vertices(N->v, N->G))
+      Worklist.push_back(N->getNode(w));
+    return;
+  }
+  graph_t &G = getGraph(F);
+  AllNodeMaps.push_back(std::vector<AnalysisNode*>());
+  std::vector<AnalysisNode*> &ANs = AllNodeMaps.back();
+  ANs.resize(num_vertices(G));
+  BOOST_FOREACH(vertex_t v, vertices(G)) {
+    ANs[v] = StackCacheAnalysis::makeNode(v, G, ANs);
+    ANs[v]->setCaller(N);
+  }
+  Worklist.push_back(ANs[G[graph_bundle].s]);
+
+}
+
+graph_t &StackCacheAnalysis::getGraph(const Function *F) {
+  CallSSA &CS = getAnalysis<CallSSA>();
+  DominatorTree &DT = getAnalysis<DominatorTree>(*const_cast<Function*>(F));
+
+  graph_cache_t::iterator it = GraphCache.find(F);
+  if (it == GraphCache.end()) {
+    DEBUG(dbgs() << "Fetching cssa-graph for " << F->getName() << "...\n");
+    boost::tie(it, tuples::ignore) =
+      GraphCache.insert(std::make_pair(F, CS.getGraph(*F, DT)));
+  }
+
+  View(it->second, it->first->getName());
+
+  return it->second;
+}
+
+StackState AnalysisNode::calcInState() const {
+  StackState in;
+  BOOST_FOREACH(vertex_t u, inv_adjacent_vertices(v,G))
+    in = std::max(in, getNode(u)->getOutState());
+  return in;
+}
+
+bool AnalysisNode::updateInState() {
+  StackState in = calcInState();
+  if (in == getInState())
+    return false;
+  DEBUG(dbgs() << "[IN]:  " << in << "\n");
+  setInState(in);
+  return true;
+}
+
+bool AnalysisNode::updateOutState(const StackState &out) {
+  if (out == getOutState())
+    return false;
+  DEBUG(dbgs() << "[OUT]: " << out << "\n");
+  setOutState(out);
+  return true;
+}
+
+StackState ReserveNode::calcInState() const {
+  if (Caller)
+    return Caller->getInState();
+  return StackState();
+}
+
 namespace {
+uint64_t add_sat(uint64_t a, uint64_t b) {
+  uint64_t c = a + b;
+  return std::max(c, std::max(a,b));
+}
+
+void StackSize::operator+= (const StackSize &RHS) {
+  sz = add_sat(sz, RHS.sz);
+}
+
 inline StackSize operator+(const StackSize &LHS, const StackSize &RHS) {
-  if (LHS.sz == StackCacheAnalysis::unlimited ||
-      RHS.sz == StackCacheAnalysis::unlimited)
-    return StackSize(StackCacheAnalysis::unlimited);
-  return StackSize(LHS.sz + RHS.sz);
+  return StackSize(add_sat(LHS.sz, RHS.sz));
+}
+
+inline bool operator==(const StackSize &LHS, const StackSize &RHS) {
+  return LHS.sz == RHS.sz;
+}
+
+inline bool operator< (const StackSize &LHS, const StackSize &RHS) {
+  return LHS.sz < RHS.sz;
 }
 
 raw_ostream& operator<<(raw_ostream &OS, const StackSize &SS) {
@@ -226,11 +475,20 @@ raw_ostream& operator<<(raw_ostream &OS, const StackSize &SS) {
     OS << SS.sz;
   return OS;
 }
+
+raw_ostream& operator<<(raw_ostream &os, const StackState &ss) {
+  os << "R: " << ss.reserved;
+  return os;
+}
 }
 
+//
+// implement SCStackInfo
+//
 void SCStackInfo::dump() const {
   dbgs() << "Stack size per function:\n";
   for (std::map<const Function*, uint64_t>::const_iterator I = StackSizes.begin(),
        E = StackSizes.end(); I != E; ++I)
     dbgs() << I->first->getName() << ": " << I->second << "\n";
 }
+

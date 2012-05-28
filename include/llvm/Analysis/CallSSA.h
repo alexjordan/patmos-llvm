@@ -21,21 +21,26 @@
 
 namespace llvm {
 
+// namespace for the call-ssa graph
 namespace cssa {
 struct node_prop_t;
+struct graph_prop_t;
+struct empty_prop_t {};
 
 // graph definition
 typedef boost::adjacency_list<boost::listS,
                               boost::vecS,
                               boost::bidirectionalS,
-                              node_prop_t
+                              node_prop_t,
+                              boost::no_property,
+                              graph_prop_t
                              > graph_t;
 
 // graphviz output
 void View(const graph_t& G, const std::string &Name);
 void Write(std::ostream &O, const graph_t& G, const std::string &Name);
 
-// vertex and edge properties
+// property classes
 struct node_prop_t {
   const llvm::Function *func;
   std::string str;
@@ -43,9 +48,18 @@ struct node_prop_t {
   node_prop_t(const std::string &s) : func(NULL), str(s) {}
 };
 
+struct graph_prop_t {
+  // cannot yet use graph_traits
+  boost::adjacency_list_traits<
+    boost::listS, boost::vecS, boost::bidirectionalS>::vertex_descriptor s, t;
+  const Function *F;
+};
+
 // convenience typdefs
 typedef boost::graph_traits<graph_t>::vertex_descriptor vertex_t;
-}
+typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
+
+} // cssa::
 
 class CallSSA : public ModulePass {
   cssa::graph_t Graph;
@@ -67,6 +81,8 @@ public:
   }
 
   const cssa::graph_t &getGraph() const { return Graph; }
+
+  cssa::graph_t getGraph(const Function &F, DominatorTree &DT);
 
 protected:
   void convertCalls(BasicBlock *dst, const BasicBlock *src, Value *Chain);

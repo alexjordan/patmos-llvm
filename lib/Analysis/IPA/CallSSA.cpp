@@ -106,9 +106,7 @@ bool CallSSA::runOnModule(Module &m) {
   return false;
 }
 
-bool CallSSA::runOnFunction(Function &F) {
-  // the source function
-  DominatorTree &DT = getAnalysis<DominatorTree>(F);
+cssa::graph_t CallSSA::getGraph(const Function &F, DominatorTree &DT) {
 
   // backedges in the source function
   typedef std::pair<const BasicBlock*, const BasicBlock*> Edge_t;
@@ -198,16 +196,16 @@ bool CallSSA::runOnFunction(Function &F) {
   FPM.add(createPromoteMemoryToRegisterPass());
   FPM.run(*newF);
 
-  M->dump();
+  //M->dump();
 
 
   // translate result to graph
   graph_t graph;
   translate(graph, *newF);
-  View(graph, F.getName());
+  graph[graph_bundle].F = &F;
 
   delete M;
-  return false;
+  return graph;
 }
 
 optional<node_prop_t> CallSSA::translateInst(Instruction *I) const {
@@ -229,6 +227,8 @@ void CallSSA::translate(graph_t &G, Function &F) {
 
   vertex_t s = add_vertex(node_prop_t("s"), G);
   vertex_t t = add_vertex(node_prop_t("t"), G);
+  G[graph_bundle].s = s;
+  G[graph_bundle].t = t;
 
   std::list<std::pair<BasicBlock*, vertex_t> > Worklist;
   Worklist.push_back(std::make_pair(&F.getEntryBlock(), s));
