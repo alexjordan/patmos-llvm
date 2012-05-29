@@ -30,6 +30,7 @@ namespace {
     uint64_t sz;
     StackSize(uint64_t s = 0) : sz(s) {}
     void operator+= (const StackSize &RHS);
+    void operator-= (const StackSize &RHS);
     friend bool operator== (const StackSize &LHS, const StackSize &RHS);
     friend bool operator< (const StackSize &LHS, const StackSize &RHS);
     friend StackSize operator+ (const StackSize &LHS, const StackSize &RHS);
@@ -43,6 +44,11 @@ namespace {
     StackState reserve(const StackSize &ss) {
       StackState newSS(*this);
       newSS.reserved += ss;
+      return newSS;
+    }
+    StackState free(const StackSize &ss) {
+      StackState newSS(*this);
+      newSS.reserved -= ss;
       return newSS;
     }
 
@@ -114,8 +120,11 @@ namespace {
   };
   class CallNode : public AnalysisNode {
   public:
-    CallNode(vertex_t v, graph_t &G, an_map_t &AM) : AnalysisNode(v,G,AM) {}
+    AnalysisNode *Callee, *Ret;
+    CallNode(vertex_t v, graph_t &G, an_map_t &AM)
+      : AnalysisNode(v,G,AM), Callee(NULL), Ret(NULL) {}
     void accept(AnalysisVisitor *visitor) { visitor->visit(this); }
+    bool updateOutFromRet();
   };
 
   typedef GraphTraits<CallGraphNode*> CGT;
@@ -339,8 +348,16 @@ void StackCacheAnalysis::topDown(Module &M) {
     N->accept(this);
   }
 
-  //BOOST_FOREACH(AnalysisNode *n, ANs)
-  //  delete n;
+  DEBUG(dbgs() << "--- end state ---\n");
+  DEBUG(dbgs() << "[IN]:  " << ANs[G[graph_bundle].t]->getInState() << "\n");
+  DEBUG(dbgs() << "[OUT]: " << ANs[G[graph_bundle].t]->getOutState() << "\n");
+  assert(ANs[G[graph_bundle].t]->getOutState().reserved == 0);
+
+
+
+  BOOST_FOREACH(std::vector<AnalysisNode*> &vec, AllNodeMaps)
+    BOOST_FOREACH(AnalysisNode *n, vec)
+      delete n;
 }
 
 AnalysisNode *StackCacheAnalysis::makeNode(vertex_t v,
@@ -367,7 +384,12 @@ void StackCacheAnalysis::visit(ReserveNode *N) {
 }
 
 void StackCacheAnalysis::visit(FreeNode *N) {
+  SCStackInfo::ssmap_t &StackSizes = SCSI->StackSizes;
   dbgs() << "visit: t\n";
+  if (!N->updateInState())
+    return;
+  if (!N->updateOutState(N->getInState().free(StackSizes[N->getFunction()])))
+    return;
   if (AnalysisNode *C = N->getCaller())
     Worklist.push_back(C);
 }
@@ -376,28 +398,37 @@ void StackCacheAnalysis::visit(CallNode *N) {
   const Function *F = N->G[N->v].func;
 
   DEBUG(dbgs() << "visit: call " << F->getName() << "\n");
-  if (!N->updateInState())
-    return;
 
-  CallGraph& CG = getAnalysis<CallGraph>();
-  if (Blacklist.count(CG[F])) {
-    DEBUG(dbgs() << "visit: ..skipping call\n");
-    if (!N->updateOutState(N->getInState()))
+  if (N->updateInState()) {
+    // incoming state changed -> propagate to call
+    CallGraph& CG = getAnalysis<CallGraph>();
+    if (Blacklist.count(CG[F])) {
+      DEBUG(dbgs() << "visit: ..skipping call\n");
+      if (!N->updateOutState(N->getInState()))
+        return;
+      BOOST_FOREACH(vertex_t w, adjacent_vertices(N->v, N->G))
+        Worklist.push_back(N->getNode(w));
       return;
+    }
+    if (!N->Callee) {
+      // create subgraph analysis nodes
+      graph_t &G = getGraph(F);
+      AllNodeMaps.push_back(std::vector<AnalysisNode*>());
+      std::vector<AnalysisNode*> &ANs = AllNodeMaps.back();
+      ANs.resize(num_vertices(G));
+      BOOST_FOREACH(vertex_t v, vertices(G)) {
+        ANs[v] = StackCacheAnalysis::makeNode(v, G, ANs);
+        ANs[v]->setCaller(N);
+      }
+      N->Callee = ANs[G[graph_bundle].s];
+      N->Ret = ANs[G[graph_bundle].t];
+    }
+    Worklist.push_back(N->Callee);
+  } else if (N->updateOutFromRet()) {
+    // stack state of the call changed -> update our out-state
     BOOST_FOREACH(vertex_t w, adjacent_vertices(N->v, N->G))
       Worklist.push_back(N->getNode(w));
-    return;
   }
-  graph_t &G = getGraph(F);
-  AllNodeMaps.push_back(std::vector<AnalysisNode*>());
-  std::vector<AnalysisNode*> &ANs = AllNodeMaps.back();
-  ANs.resize(num_vertices(G));
-  BOOST_FOREACH(vertex_t v, vertices(G)) {
-    ANs[v] = StackCacheAnalysis::makeNode(v, G, ANs);
-    ANs[v]->setCaller(N);
-  }
-  Worklist.push_back(ANs[G[graph_bundle].s]);
-
 }
 
 graph_t &StackCacheAnalysis::getGraph(const Function *F) {
@@ -446,6 +477,16 @@ StackState ReserveNode::calcInState() const {
   return StackState();
 }
 
+bool CallNode::updateOutFromRet() {
+  assert(Ret);
+  StackState out = Ret->getOutState();
+  if (out == getOutState())
+    return false;
+  DEBUG(dbgs() << "[OUT]: " << out << "\n");
+  setOutState(out);
+  return true;
+}
+
 namespace {
 uint64_t add_sat(uint64_t a, uint64_t b) {
   uint64_t c = a + b;
@@ -454,6 +495,11 @@ uint64_t add_sat(uint64_t a, uint64_t b) {
 
 void StackSize::operator+= (const StackSize &RHS) {
   sz = add_sat(sz, RHS.sz);
+}
+
+void StackSize::operator-= (const StackSize &RHS) {
+  assert(sz >= RHS.sz);
+  sz -= RHS.sz;
 }
 
 inline StackSize operator+(const StackSize &LHS, const StackSize &RHS) {
