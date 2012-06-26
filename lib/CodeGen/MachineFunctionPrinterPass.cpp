@@ -87,6 +87,9 @@ struct MachineFrameInfoPrinterPass : public MachineFunctionPass {
 
     if (nTemps)
       OS << "..number of temps: " << nTemps << "\n";
+
+    if (MFI->getNumFixedObjects())
+      OS << "..number of fixed: " << MFI->getNumFixedObjects() << "\n";
     return false;
   }
 };
