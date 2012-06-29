@@ -64,9 +64,10 @@ typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
 class CallSSA : public ModulePass {
   cssa::graph_t Graph;
   std::map<Value*, const Function*> CallMap;
+  bool IncompleteAnalysis;
 public:
   static char ID; // Pass identification, replacement for typeid
-  CallSSA() : ModulePass(ID) {
+  CallSSA() : ModulePass(ID), IncompleteAnalysis(false) {
     initializeCallSSAPass(*PassRegistry::getPassRegistry());
   }
 
@@ -83,6 +84,7 @@ public:
   const cssa::graph_t &getGraph() const { return Graph; }
 
   cssa::graph_t getGraph(const Function &F, DominatorTree &DT);
+  bool isIncomplete() const { return IncompleteAnalysis; }
 
 protected:
   void convertCalls(BasicBlock *dst, const BasicBlock *src, Value *Chain);

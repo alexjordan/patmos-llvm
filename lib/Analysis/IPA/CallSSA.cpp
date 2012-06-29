@@ -196,7 +196,7 @@ cssa::graph_t CallSSA::getGraph(const Function &F, DominatorTree &DT) {
   FPM.add(createPromoteMemoryToRegisterPass());
   FPM.run(*newF);
 
-  //M->dump();
+  M->dump();
 
 
   // translate result to graph
@@ -286,6 +286,11 @@ void CallSSA::convertCalls(BasicBlock *dst, const BasicBlock *src,
      ImmutableCallSite CS(I);
      if (!CS.isCall())
        continue;
+     if (!CS.getCalledFunction()) {
+       errs() << "unresolved call: " << *I << "\n";
+       IncompleteAnalysis = true;
+       return;
+     }
      // load previous chain
      Value *u = bld.CreateLoad(chain, "chain.reload");
      // call with chain as argument

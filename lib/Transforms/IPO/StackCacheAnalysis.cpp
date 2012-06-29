@@ -151,7 +151,7 @@ namespace {
 
     bool runOnModule(Module &M);
 
-    void bottomUp(Module &M);
+    bool bottomUp(Module &M);
     void topDown(Module &M);
 
     // topdown related..
@@ -197,25 +197,37 @@ ModulePass *llvm::createStackCacheAnalysisPass(SCStackInfo *SCSI) {
 
 
 bool StackCacheAnalysis::runOnModule(Module &M) {
-  //CallSSA &CS = getAnalysis<CallSSA>();
-  //graph_t G = CS.getGraph();
-  //DEBUG(dbgs() << "#nodes: " << num_vertices(G) << "\n");
-  //DEBUG(dbgs() << "#edges: " << num_edges(G) << "\n");
+  CallSSA &CS = getAnalysis<CallSSA>();
+  if (CS.isIncomplete()) {
+    errs() << "StackCacheAnalysis: incomplete call-ssa, aborting\n";
+    return false;
+  }
+
+  bool complete;
 
   //cssa::View(G, "foo");
-  bottomUp(M);
+  complete = bottomUp(M);
+
+  if (!complete) {
+    errs() << "StackCacheAnalysis: incomplete call-ssa, aborting\n";
+    return false;
+  }
+
   topDown(M);
 
   return true;
 }
 
-void StackCacheAnalysis::bottomUp(Module &M) {
+bool StackCacheAnalysis::bottomUp(Module &M) {
   CallGraph& CG = getAnalysis<CallGraph>();
   assert(SCSI);
   SCStackInfo::ssmap_t &StackSizes = SCSI->StackSizes;
 
   CGN *root = CG.getRoot();
-  assert(root->getFunction());
+  if (!root->getFunction()) {
+    errs() << "StackCacheAnalysis: no root function\n";
+    return false;
+  }
 
   typedef std::vector<CGN*> scc_t;
   std::vector<scc_t> SCCs;
@@ -319,9 +331,12 @@ void StackCacheAnalysis::bottomUp(Module &M) {
        E = MaxStack.end(); I != E; ++I)
     if (Function *F = I->first->getFunction())
       dbgs() << F->getName() << ": " << I->second << "\n";
+
+  return true;
 }
 
 void StackCacheAnalysis::topDown(Module &M) {
+  CallSSA &CS = getAnalysis<CallSSA>();
   CallGraph& CG = getAnalysis<CallGraph>();
   CGN *root = CG.getRoot();
   Function *F = root->getFunction();
@@ -341,17 +356,28 @@ void StackCacheAnalysis::topDown(Module &M) {
   // kick off propagation
   ANs[G[graph_bundle].s]->setInState(StackState(-1));
   Worklist.push_back(ANs[G[graph_bundle].s]);
+  bool AnalysisComplete = true;
 
   while (Worklist.size()) {
+
+    // lazy analysis. we have to check again if something was undefined
+    if (CS.isIncomplete()) {
+      errs() << "StackCacheAnalysis: incomplete call-ssa, aborting\n";
+      AnalysisComplete = false;
+      break;
+    }
+
     AnalysisNode *N = Worklist.front();
     Worklist.pop_front();
     N->accept(this);
   }
 
-  DEBUG(dbgs() << "--- end state ---\n");
-  DEBUG(dbgs() << "[IN]:  " << ANs[G[graph_bundle].t]->getInState() << "\n");
-  DEBUG(dbgs() << "[OUT]: " << ANs[G[graph_bundle].t]->getOutState() << "\n");
-  assert(ANs[G[graph_bundle].t]->getOutState().reserved == 0);
+  if (AnalysisComplete) {
+    DEBUG(dbgs() << "--- end state ---\n");
+    DEBUG(dbgs() << "[IN]:  " << ANs[G[graph_bundle].t]->getInState() << "\n");
+    DEBUG(dbgs() << "[OUT]: " << ANs[G[graph_bundle].t]->getOutState() << "\n");
+    assert(ANs[G[graph_bundle].t]->getOutState().reserved == 0);
+  }
 
 
 
@@ -442,7 +468,7 @@ graph_t &StackCacheAnalysis::getGraph(const Function *F) {
       GraphCache.insert(std::make_pair(F, CS.getGraph(*F, DT)));
   }
 
-  View(it->second, it->first->getName());
+  //View(it->second, it->first->getName());
 
   return it->second;
 }
