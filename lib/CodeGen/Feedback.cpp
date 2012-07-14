@@ -35,9 +35,13 @@ STATISTIC(NumSpills,     "Number of spill slot stack objects");
 STATISTIC(NumTemps,      "Number of temporary stack objects");
 STATISTIC(NumVariable,   "Number of variable sized stack objects");
 
+static cl::opt<bool>
+EnableSSAA("enable-ssaa", cl::NotHidden,
+           cl::desc("Do static analysis of stack accesses"));
 static cl::opt<std::string>
 SCAOutputFilename("sca-output-file", cl::value_desc("filename"),
-                  cl::desc("File to append stack analysis output to"), cl::Hidden);
+                  cl::desc("File to append stack analysis output to"),
+                  cl::NotHidden);
 
 namespace {
   class StackFeedback : public MachineFunctionPass {
@@ -117,7 +121,8 @@ bool StackFeedback::runOnMachineFunction(MachineFunction &MF) {
 
   MFB->getStackInfo()->StackSizes[MF.getFunction()] = StackSize;
 
-  analyzeStackAccesses(MF);
+  if (EnableSSAA)
+    analyzeStackAccesses(MF);
 
   return false;
 }
@@ -129,6 +134,8 @@ void StackFeedback::analyzeStackAccesses(MachineFunction &MF) {
 
   // count stack access by class
   std::vector<int> SLoad(SLOT_LAST), SStore(SLOT_LAST);
+  // non-stack loads and stores
+  int Loads = 0, Stores = 0;
 
   raw_ostream &OS = *createOutputFile();
 
@@ -154,18 +161,30 @@ void StackFeedback::analyzeStackAccesses(MachineFunction &MF) {
            oe = MI->memoperands_end(); o != oe; ++o) {
         if ((*o)->isLoad() && (*o)->getValue()) {
           OS << "LOAD: " << *MI;
+          Loads++;
           break;
         } else if ((*o)->isStore() && (*o)->getValue()) {
           OS << "STORE: " << *MI;
+          Stores++;
           break;
         }
       }
     }
   }
-  OS << "=ssaa=" << "FIXED: " << SLoad[SLOT_FIXED] << " / " << SStore[SLOT_FIXED] << "\n";
-  OS << "=ssaa=" << "SPILL: " << SLoad[SLOT_SPILL] << " / " << SStore[SLOT_SPILL] << "\n";
-  OS << "=ssaa=" << "TEMP: " << SLoad[SLOT_TEMP] << " / " << SStore[SLOT_TEMP] << "\n";
-  OS << "=ssaa=" << "VAR: " << SLoad[SLOT_VAR] << " / " << SStore[SLOT_VAR] << "\n";
+  OS << "FIXED:    " << SLoad[SLOT_FIXED] << " / " << SStore[SLOT_FIXED] << "\n";
+  OS << "SPILL:    " << SLoad[SLOT_SPILL] << " / " << SStore[SLOT_SPILL] << "\n";
+  OS << "TEMP:     " << SLoad[SLOT_TEMP] << " / " << SStore[SLOT_TEMP] << "\n";
+  OS << "VAR:      " << SLoad[SLOT_VAR] << " / " << SStore[SLOT_VAR] << "\n";
+  OS << "NONSTACK: " << Loads << " / " << Stores << "\n";
+  OS << "=ssaa=" << MF.getFunction()->getParent()->getModuleIdentifier() 
+     << ";" << MF.getFunction()->getName();
+  for (int i = 0; i < SLOT_LAST; ++i)
+    OS << ";" << SLoad[i];
+  OS << ";" << Loads;
+  for (int i = 0; i < SLOT_LAST; ++i)
+    OS << ";" << SStore[i];
+  OS << ";" << Stores;
+  OS << "\n";
   delete &OS;   // Close the file.
 }
 
