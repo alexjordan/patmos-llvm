@@ -13,6 +13,8 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/Dominators.h"
+#include "llvm/Analysis/PostDominators.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Pass.h"
 
 #include <boost/config.hpp>
@@ -28,7 +30,7 @@ struct graph_prop_t;
 struct empty_prop_t {};
 
 // graph definition
-typedef boost::adjacency_list<boost::listS,
+typedef boost::adjacency_list<boost::setS, // no parallel edges
                               boost::vecS,
                               boost::bidirectionalS,
                               node_prop_t,
@@ -59,6 +61,8 @@ struct graph_prop_t {
 typedef boost::graph_traits<graph_t>::vertex_descriptor vertex_t;
 typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
 
+bool convertCalls(BasicBlock *dst, const BasicBlock *src, Value *Chain,
+                  std::map<Value*, const Function*> &CallMap);
 } // cssa::
 
 class CallSSA : public ModulePass {
@@ -78,18 +82,21 @@ public:
   virtual void getAnalysisUsage(AnalysisUsage &AU) const {
     AU.addRequired<CallGraph>();
     AU.addRequired<DominatorTree>();
+    AU.addRequired<PostDominatorTree>();
+    AU.addRequired<LoopInfo>();
     AU.setPreservesAll();
   }
 
   const cssa::graph_t &getGraph() const { return Graph; }
 
-  cssa::graph_t getGraph(const Function &F, DominatorTree &DT);
+  cssa::graph_t getGraph(const Function &F, Pass *P);
   bool isIncomplete() const { return IncompleteAnalysis; }
+
+  boost::optional<cssa::node_prop_t> translateInst(Instruction *I) const;
 
 protected:
   void convertCalls(BasicBlock *dst, const BasicBlock *src, Value *Chain);
   void translate(cssa::graph_t &G, Function &F);
-  boost::optional<cssa::node_prop_t> translateInst(Instruction *I) const;
 
 };
 

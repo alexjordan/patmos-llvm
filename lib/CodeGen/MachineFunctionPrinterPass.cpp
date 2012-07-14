@@ -90,6 +90,7 @@ struct MachineFrameInfoPrinterPass : public MachineFunctionPass {
 
     if (MFI->getNumFixedObjects())
       OS << "..number of fixed: " << MFI->getNumFixedObjects() << "\n";
+    MFI->prsz(MF, OS);
     return false;
   }
 };

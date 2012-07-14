@@ -11,6 +11,7 @@
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/Analysis/CallSSA.h"
 #include "llvm/Analysis/StackCache.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -19,12 +20,17 @@
 
 #include <stack>
 #include "boost/foreach.hpp"
+#include "boost/tuple/tuple.hpp"
 
 using namespace llvm;
 using namespace cssa;
 using namespace boost;
 
 namespace {
+  enum StackCacheSettings {
+    BlockSize = 16,
+    NumBlocks = 2
+  };
 
   struct StackSize {
     uint64_t sz;
@@ -37,21 +43,27 @@ namespace {
     friend raw_ostream& operator<< (raw_ostream &os, const StackSize &ss);
   };
 
+  uint64_t toBlocks(uint64_t sz) { return (sz + BlockSize - 1) / BlockSize; }
+
   struct StackState {
-    StackSize reserved;
+    StackSize reserved, spilled;
     StackState(int res = 0) : reserved(res) {}
 
     StackState reserve(const StackSize &ss) {
       StackState newSS(*this);
-      newSS.reserved += ss;
+      uint64_t res = toBlocks(ss.sz);
+      uint64_t spill = std::max<int>(res - available(), 0);
+      assert(spill <= NumBlocks && "stack too small");
+      newSS.reserved += res - spill;
       return newSS;
     }
     StackState free(const StackSize &ss) {
       StackState newSS(*this);
-      newSS.reserved -= ss;
+      newSS.reserved -= toBlocks(ss.sz);
       return newSS;
     }
 
+    uint64_t available() const { return NumBlocks - reserved.sz; }
     bool operator==(const StackState &RHS) const {
       return (reserved == RHS.reserved);
     }
@@ -150,6 +162,8 @@ namespace {
     static char ID; // Pass identification, replacement for typeid
 
     bool runOnModule(Module &M);
+    void runTests(Module &M);
+    void antest(const graph_t &G);
 
     bool bottomUp(Module &M);
     void topDown(Module &M);
@@ -165,6 +179,8 @@ namespace {
       AU.addRequired<CallSSA>();
       AU.addRequired<CallGraph>();
       AU.addRequired<DominatorTree>();
+      AU.addRequired<PostDominatorTree>();
+      AU.addRequired<LoopInfo>();
       AU.setPreservesAll();
     }
 
@@ -195,8 +211,13 @@ ModulePass *llvm::createStackCacheAnalysisPass(SCStackInfo *SCSI) {
   return new StackCacheAnalysis(SCSI);
 }
 
-
 bool StackCacheAnalysis::runOnModule(Module &M) {
+
+  if (true) {
+    runTests(M);
+    return false;
+  }
+
   CallSSA &CS = getAnalysis<CallSSA>();
   if (CS.isIncomplete()) {
     errs() << "StackCacheAnalysis: incomplete call-ssa, aborting\n";
@@ -377,7 +398,8 @@ void StackCacheAnalysis::topDown(Module &M) {
     DEBUG(dbgs() << "[IN]:  " << ANs[G[graph_bundle].t]->getInState() << "\n");
     DEBUG(dbgs() << "[OUT]: " << ANs[G[graph_bundle].t]->getOutState() << "\n");
     assert(ANs[G[graph_bundle].t]->getOutState().reserved == 0);
-  }
+  } else
+    errs() << "StackCacheAnalysis: analysis was incomplete\n";
 
 
 
@@ -439,6 +461,9 @@ void StackCacheAnalysis::visit(CallNode *N) {
     if (!N->Callee) {
       // create subgraph analysis nodes
       graph_t &G = getGraph(F);
+      if (num_vertices(G) < 2) {
+        return;
+      }
       AllNodeMaps.push_back(std::vector<AnalysisNode*>());
       std::vector<AnalysisNode*> &ANs = AllNodeMaps.back();
       ANs.resize(num_vertices(G));
@@ -459,16 +484,16 @@ void StackCacheAnalysis::visit(CallNode *N) {
 
 graph_t &StackCacheAnalysis::getGraph(const Function *F) {
   CallSSA &CS = getAnalysis<CallSSA>();
-  DominatorTree &DT = getAnalysis<DominatorTree>(*const_cast<Function*>(F));
 
   graph_cache_t::iterator it = GraphCache.find(F);
   if (it == GraphCache.end()) {
     DEBUG(dbgs() << "Fetching cssa-graph for " << F->getName() << "...\n");
     boost::tie(it, tuples::ignore) =
-      GraphCache.insert(std::make_pair(F, CS.getGraph(*F, DT)));
+      GraphCache.insert(std::make_pair(F, CS.getGraph(*F, this)));
   }
 
-  //View(it->second, it->first->getName());
+  //if (num_vertices(it->second) > 2)
+  //  View(it->second, it->first->getName());
 
   return it->second;
 }
@@ -563,4 +588,252 @@ void SCStackInfo::dump() const {
        E = StackSizes.end(); I != E; ++I)
     dbgs() << I->first->getName() << ": " << I->second << "\n";
 }
+
+//
+// testing
+//
+static std::string toString(vertex_t v, const graph_t &G) {
+  if (G[v].func)
+    return "call: " + G[v].func->getName().str() + "()";
+  else
+    return G[v].str;
+}
+
+namespace Test {
+  class AnalysisNode;
+  typedef std::pair<AnalysisNode*, AnalysisNode*> callsite_t;
+
+struct Global {
+  StackCacheAnalysis *SCA;
+  SCStackInfo::ssmap_t StackSizes;
+  typedef std::map<boost::tuple<AnalysisNode*, vertex_t, const Function*>,
+          AnalysisNode*> map_t;
+  map_t Map;
+  std::set<AnalysisNode*> Worklist;
+
+  Global(StackCacheAnalysis *SCA) : SCA(SCA) {}
+
+  AnalysisNode *getNode(AnalysisNode *CallSite, vertex_t v, const graph_t &G) {
+    return getNode(CallSite, v, G[graph_bundle].F);
+  }
+  AnalysisNode *getNode(AnalysisNode *CS, vertex_t v, const Function *F) {
+    assert(false && "not impl");
+    /*
+    map_t::iterator it;
+    map_t::key_type key = boost::make_tuple(CS,v,F);
+    if ((it = Map.find(key)) != Map.end())
+      return it->second;
+    AnalysisNode *N = makeNode(v,SCA->getGraph(F));
+    Map[key] = N;
+    return N;
+    */
+  }
+  void work();
+  void newCall(const callsite_t &CS, const graph_t &G);
+  void newCall(const callsite_t &CS, const Function *F) {
+    newCall(CS, SCA->getGraph(F));
+  }
+};
+
+struct Local {
+  uint64_t StackSize;
+  typedef std::map<vertex_t, AnalysisNode*> map_t;
+  map_t Map;
+  Global *A;
+
+  Local(Global *g) : A(g) {}
+
+  void addToWorklist(AnalysisNode *N) { A->Worklist.insert(N); }
+  void newCall(const callsite_t &CS, const Function *F) { A->newCall(CS, F); }
+
+  AnalysisNode *getNode(vertex_t v, const graph_t& G) {
+    map_t::iterator it;
+    if ((it = Map.find(v)) != Map.end())
+      return it->second;
+    AnalysisNode *N = makeNode(v,G);
+    Map[v] = N;
+    return N;
+  }
+  AnalysisNode *makeNode(vertex_t v, const graph_t &G);
+};
+
+class AnalysisNode {
+public:
+  Local *L;
+  StackState inState;
+  StackState outState;
+public:
+  vertex_t v;
+  const graph_t &G;
+  const Function *F;
+  AnalysisNode(vertex_t v, const graph_t &G)
+    : L(NULL), v(v), G(G), F(G[graph_bundle].F) {}
+  virtual ~AnalysisNode() {}
+  void set(Local *local) { L = local; }
+  void succs() {
+    BOOST_FOREACH(vertex_t u, adjacent_vertices(v,G))
+      dbgs() << "succ: " << L->getNode(u,G) << " " << toString(u,G) << "\n";
+  }
+  void kick(const StackState &SS) {
+    inState = SS;
+    L->addToWorklist(this);
+  }
+  virtual void update() = 0;
+  void propagate() {
+    BOOST_FOREACH(vertex_t u, adjacent_vertices(v,G)) {
+      L->getNode(u,G)->inState = outState;
+      L->addToWorklist(L->getNode(u,G));
+    }
+  }
+
+};
+class ReserveNode : public AnalysisNode {
+public:
+  ReserveNode(vertex_t v, const graph_t &G) : AnalysisNode(v,G) {}
+  void update() {
+    outState = inState.reserve(L->StackSize);
+    dbgs() << "[" << F->getName() << "] reserve out: " << outState << "\n";
+    propagate();
+  }
+#if 0
+      dbgs() << "leaf graph, ";
+      dbgs() << "stack use: " << StackSizes[I] << "\n";
+      for (int s = 0; s <= NumBlocks; ++s) {
+        StackState ss(s);
+        dbgs() << "state before: " << ss << "\n";
+        ss = ss.reserve(StackSizes[I]);
+        dbgs() << "state between: " << ss << "\n";
+        ss = ss.free(StackSizes[I]);
+        dbgs() << "state after: " << ss << "\n";
+      }
+#endif
+};
+class FreeNode : public AnalysisNode {
+  AnalysisNode *Return;
+public:
+  FreeNode(vertex_t v, const graph_t &G) : AnalysisNode(v,G), Return(0) {}
+  void update() {
+    outState = inState.free(L->StackSize);
+    dbgs() << "[" << F->getName() << "]free out: " << outState << "\n";
+    assert(Return && "analysis over");
+    Return->inState = outState;
+    L->addToWorklist(Return);
+  }
+  void setParent(AnalysisNode *N) { Return = N; }
+};
+
+class CallDeferNode : public AnalysisNode {
+  AnalysisNode *Return;
+public:
+  CallDeferNode(vertex_t v, const graph_t &G, AnalysisNode *R)
+    : AnalysisNode(v,G), Return(R) {}
+  void update() {
+    L->newCall(std::make_pair(this, Return), G[v].func);
+  }
+};
+
+class EnsureNode : public AnalysisNode {
+public:
+  EnsureNode(vertex_t v, const graph_t &G)
+    : AnalysisNode(v,G) {}
+  void update() {
+    dbgs() << "ensure: " << inState << "\n";
+    succs();
+    propagate();
+  }
+};
+
+AnalysisNode *Local::makeNode(vertex_t v, const graph_t &G) {
+  AnalysisNode *N;
+  if (v == G[graph_bundle].s)
+    N = new ReserveNode(v,G);
+  else if (v == G[graph_bundle].t)
+    N = new FreeNode(v,G);
+  else {
+    // it's a call
+    AnalysisNode *M = new EnsureNode(v,G);
+    M->set(this);
+    N = new CallDeferNode(v,G,M);
+  }
+
+  N->set(this);
+  return N;
+}
+
+void Global::work() {
+  while (Worklist.size()) {
+    AnalysisNode *N = *Worklist.begin();
+    Worklist.erase(Worklist.begin());
+    N->update();
+  }
+}
+void Global::newCall(const callsite_t &CS, const graph_t &G) {
+  // set up local context
+  Local *L = new Local(this);
+  L->StackSize = StackSizes[G[graph_bundle].F];
+
+  // create the entry node
+  AnalysisNode *S = new ReserveNode(G[graph_bundle].s, G);
+  S->set(L);
+  S->kick(StackState());
+  L->Map[G[graph_bundle].s] = S;
+
+  // and the exit node
+  FreeNode *T = new FreeNode(G[graph_bundle].s, G);
+  T->set(L);
+  T->setParent(CS.second);
+  L->Map[G[graph_bundle].t] = T;
+}
+
+class AnalysisRoot : public AnalysisNode {
+public:
+  AnalysisRoot() : AnalysisNode(0, graph_t()) {}
+  void update() {
+    dbgs() << "analysis root reached\n";
+  }
+};
+}
+
+void StackCacheAnalysis::antest(const graph_t &G) {
+  /*
+  Test::AnalysisNode *S = glob.makeNode(G[graph_bundle].s, G);
+  S->succs();
+  */
+  SCStackInfo::ssmap_t &StackSizes = SCSI->StackSizes;
+  Test::Global glob(this);
+  glob.StackSizes = StackSizes;
+  Test::AnalysisRoot RN;
+  glob.newCall(std::make_pair(&RN, &RN), G);
+  glob.work();
+}
+
+void StackCacheAnalysis::runTests(Module &M) {
+  SCStackInfo::ssmap_t &StackSizes = SCSI->StackSizes;
+  for (Module::iterator I = M.begin(), E = M.end(); I != E; ++I) {
+    if (I->isDeclaration())
+      continue;
+    getGraph(I);
+
+    /*
+    BOOST_FOREACH(vertex_t v, vertices(G)) {
+      dbgs() << toString(v,G) << "\n";
+      if (G[v].func) {
+      } else {
+        BOOST_FOREACH(vertex_t u, adjacent_vertices(v,G))
+          dbgs() << "succ: " << toString(u,G) << "\n";
+      }
+    }
+    View(G, "foo");
+    */
+
+  }
+  {
+    CallGraph& CG = getAnalysis<CallGraph>();
+    CGN *root = CG.getRoot();
+    Function *F = root->getFunction();
+    assert(F);
+    antest(getGraph(F));
+  }
+}
+
 

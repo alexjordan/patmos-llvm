@@ -15,6 +15,7 @@
 
 #include "llvm/DerivedTypes.h"
 #include "llvm/Function.h"
+#include "llvm/Module.h"
 #include "llvm/Instructions.h"
 #include "llvm/Config/config.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
@@ -514,6 +515,23 @@ void MachineFrameInfo::print(const MachineFunction &MF, raw_ostream &OS) const{
       OS << "]";
     }
     OS << "\n";
+  }
+}
+
+void MachineFrameInfo::prsz(const MachineFunction &MF, raw_ostream &OS) const{
+  if (Objects.empty()) return;
+  for (unsigned i = 0, e = Objects.size(); i != e; ++i) {
+    const StackObject &SO = Objects[i];
+    if (SO.Size == ~0ULL) {
+      continue;
+    }
+    if (SO.Size == 0)
+      continue;
+    OS << "=MFISZ="
+      << MF.getFunction()->getParent()->getModuleIdentifier() << ","
+      << MF.getFunction()->getName() << ","
+      << "fi#" << (int)(i-NumFixedObjects) << ","
+      << SO.Size << "\n";
   }
 }
 

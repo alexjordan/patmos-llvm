@@ -276,6 +276,7 @@ def RM: SPR<512, "**ROUNDING MODE**">;
 /// Register classes
 // Allocate volatiles first
 // then nonvolatiles in reverse order since stmw/lmw save from rN to r31
+//def GPRC : RegisterClass<"PPC", [i32], 32, (add (sequence "R%u", 2, 8),
 def GPRC : RegisterClass<"PPC", [i32], 32, (add (sequence "R%u", 2, 12),
                                                 (sequence "R%u", 30, 13),
                                                 R31, R0, R1, LR)>;

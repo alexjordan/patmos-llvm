@@ -568,6 +568,7 @@ public:
   /// stack objects. Implemented in MachineFunction.cpp
   ///
   void print(const MachineFunction &MF, raw_ostream &OS) const;
+  void prsz(const MachineFunction &MF, raw_ostream &OS) const;
 
   /// dump - Print the function to stderr.
   void dump(const MachineFunction &MF) const;
