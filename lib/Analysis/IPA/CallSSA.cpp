@@ -60,7 +60,7 @@ struct LoopPeel : public LoopPass {
   Value *Chain;
   std::map<Value*, const Function*> &CallMap;
   LoopPeel(Value *Chain, std::map<Value*, const Function*> &CM)
-      : LoopPass(ID), Chain(Chain), CallMap(CM) {
+      : LoopPass(ID), Chain(Chain), CallMap(CM), DidConvert(false) {
     initializeLoopSimplifyPass(*PassRegistry::getPassRegistry());
   }
 
@@ -74,6 +74,8 @@ struct LoopPeel : public LoopPass {
   void removeObsolete(Loop *L, BasicBlock *BB, PostDominatorTree *PDT);
 
   std::map<Loop*, SmallVector<BasicBlock*, 4> > ExitCheck;
+
+  bool DidConvert;
 };
 char LoopPeel::ID = 0;
 #if 0
@@ -194,6 +196,57 @@ static bool loopsize_greater(const Loop* left, const Loop *right) {
   return left->getLoopDepth() > right->getLoopDepth();
 }
 
+static bool hasCall(const BasicBlock *BB) {
+  for (BasicBlock::const_iterator I = BB->begin(), E = BB->end();
+       I != E; ++I) {
+    ImmutableCallSite CS(I);
+    if (!CS.isCall())
+      continue;
+    const Function *F = CS.getCalledFunction();
+    if (F && F->isIntrinsic())
+      continue;
+    dbgs() << BB->getName() << "calls " << (F ? F->getName() : "something") << "\n";
+    return true;
+  }
+  return false;
+}
+static void studySwitch(const SwitchInst *SI) {
+  for (unsigned i = 0; i < SI->getNumCases(); ++i) {
+    BasicBlock *BB = SI->getSuccessor(i);
+    bool call = hasCall(BB);
+    dbgs() << "case-" << i << ": " << (call ? "call" : "nope") << "\n";
+  }
+}
+
+struct LoopSkipper {
+  typedef std::map<const BasicBlock*, SmallVector<BasicBlock*, 4> > skipmap_t;
+  skipmap_t SkipMap;
+  std::set<const BasicBlock*> SkippedBlocks;
+  template<typename Iter>
+  LoopSkipper(Iter begin, Iter end) {
+    for (Iter I = begin; I != end; ++I) {
+      const Loop *L = *I;
+      bool call = false;
+      BOOST_FOREACH(BasicBlock *BB, std::make_pair(L->block_begin(), L->block_end())) {
+        if (hasCall(BB)) {
+          call = true;
+          break;
+        }
+      }
+      if (call)
+        continue;
+      skipmap_t::mapped_type exits;
+      L->getExitBlocks(exits);
+      SkipMap[L->getHeader()] = exits;
+      if (L->getBlocks().size() == 1)
+        continue; // XXX kill the self loop
+      // insert everything but the header
+      for (unsigned i = 1; i < L->getBlocks().size(); ++i)
+        SkippedBlocks.insert(L->getBlocks()[i]);
+    }
+  }
+};
+
 cssa::graph_t CallSSA::getGraph(const Function &F, Pass *P) {
   if (!F.size()) {
     IncompleteAnalysis = true;
@@ -210,13 +263,14 @@ cssa::graph_t CallSSA::getGraph(const Function &F, Pass *P) {
   while (LoopInfoWalker.size()) {
     const Loop *L = LoopInfoWalker.front();
     LoopInfoWalker.pop_front();
-    if (L->getExitBlock() == 0)
+    //if (L->getExitBlock() == 0)
       WL.push_back(L);
     LoopInfoWalker.insert(LoopInfoWalker.end(), L->begin(), L->end());
   }
 
-  BOOST_FOREACH(const Loop *L, WL) {
+  LoopSkipper LS(WL.begin(), WL.end());
 
+  BOOST_FOREACH(const Loop *L, WL) {
     unsigned depth = L->getLoopDepth();
     L->dump();
     SmallVector<BasicBlock*, 4> Exits;
@@ -241,6 +295,8 @@ cssa::graph_t CallSSA::getGraph(const Function &F, Pass *P) {
   BOOST_FOREACH(const BasicBlock &rBB,
                 std::make_pair(F.begin(), F.end())) {
     const BasicBlock *BB = &rBB;
+    if (LS.SkippedBlocks.count(BB))
+      continue;
     BasicBlock *newBB = BasicBlock::Create(C, BB->getName(), newF);
     BBmap[BB] = newBB;
     WorkMap[BB] = newBB;
@@ -312,10 +368,30 @@ cssa::graph_t CallSSA::getGraph(const Function &F, Pass *P) {
       continue;
     }
 
+    if (LS.SkipMap.count(BB)) {
+      SwitchInst *I = NULL;
+      BOOST_FOREACH(BasicBlock *exit, LS.SkipMap[BB]) {
+        assert(BBmap.count(exit));
+        BasicBlock *eBB = BBmap[exit];
+        if (!I) {
+          I = SwitchInst::Create(UndefValue::get(bld.getInt32Ty()), eBB, 0, newBB);
+        } else {
+          I->addCase(bld.getInt32(0), eBB);
+        }
+      }
+      VIEW(*newF, "skipped loop: " + BB->getName());
+      continue;
+    }
+
+    const SwitchInst *SI = dyn_cast<SwitchInst>(TI);
+    if (SI) {
+      dbgs() << "switch w/ " << SI->getNumSuccessors() << " succ(s)\n";
+      studySwitch(SI);
+    }
     // clone and remap branches
-    const BranchInst *BI = dyn_cast<BranchInst>(TI);
-    assert(BI);
-    Instruction *I = BI->clone();
+    //const BranchInst *BI = dyn_cast<BranchInst>(TI);
+    assert(isa<BranchInst>(TI) || isa<SwitchInst>(TI));
+    Instruction *I = TI->clone();
     BOOST_FOREACH(Use &U, std::make_pair(I->op_begin(), I->op_end())) {
       if (BasicBlock *dst = dyn_cast<BasicBlock>(U.get())) {
         // redirect branch to block in the new function
@@ -348,8 +424,10 @@ cssa::graph_t CallSSA::getGraph(const Function &F, Pass *P) {
 
 #endif
         U.set(mappedDst);
+      } else if (isa<Constant>(U.get())) {
+        // nothing
       } else {
-        U.set(UndefValue::get(bld.getInt1Ty()));
+        U.set(UndefValue::get(U.get()->getType()));
       }
     }
     newBB->getInstList().push_back(I);
@@ -430,10 +508,18 @@ cssa::graph_t CallSSA::getGraph(const Function &F, Pass *P) {
 
   VIEW(F, "orig");
 
+  for (bool run = true; run == true;) {
+    FunctionPassManager FPM(M);
+    LoopPeel *LP = new LoopPeel(Chain, CallMap);
+    FPM.add(LP);
+    FPM.run(*newF);
+    run = LP->DidConvert;
+  }
+
   {
   FunctionPassManager FPM(M);
-  FPM.add(new LoopPeel(Chain, CallMap)); // before reg2mem!
   FPM.add(createPromoteMemoryToRegisterPass());
+  //FPM.add(createCFGSimplificationPass());
   FPM.run(*newF);
   }
 
@@ -581,6 +667,8 @@ void CallSSA::translate(graph_t &G, Function &F) {
     }
   }
 
+  dbgs() << "blocks to translate: " << F.size() << "\n";
+  dbgs() << "pre-walk  handled: " << Rec.bbMap.size() << "\n";
 
   BOOST_FOREACH(vertex_t u, Rec.getVertex(&F.getEntryBlock()))
     add_edge(s,u,G);
@@ -682,10 +770,13 @@ bool cssa::convertCalls(BasicBlock *dst, const BasicBlock *src,
      ImmutableCallSite CS(I);
      if (!CS.isCall())
        continue;
-     if (!CS.getCalledFunction()) {
+     const Function *F;
+     if (!(F = CS.getCalledFunction())) {
        errs() << "unresolved call: " << *I << "\n";
        return false;
      }
+     if (F->isIntrinsic())
+       continue;
      // load previous chain
      Value *u = bld.CreateLoad(chain, "chain.reload");
      // call with chain as argument
@@ -750,8 +841,6 @@ void LoopPeel::removeObsolete(Loop *L, BasicBlock *BB, PostDominatorTree *PDT) {
 
 void LoopPeel::redirectBackedges(Loop *L, BasicBlock *target) {
   BasicBlock *H = L->getHeader();
-  PostDominatorTree *PDT = new PostDominatorTree();
-  PDT->runOnFunction(*H->getParent());
   std::set<User*> Users;
   for (Value::use_iterator UI = H->use_begin(), UE = H->use_end();
        UI != UE; ++UI) {
@@ -762,20 +851,26 @@ void LoopPeel::redirectBackedges(Loop *L, BasicBlock *target) {
   }
 
   BOOST_FOREACH(User *U, Users) {
+    PostDominatorTree *PDT = new PostDominatorTree();
+    PDT->runOnFunction(*H->getParent());
+
     BasicBlock *BB = dyn_cast<Instruction>(U)->getParent();
     U->replaceUsesOfWith(H, target ? target : BB);
     dbgs() << "redirecting backedge in " << BB->getName() << "\n";
+    DidConvert = true;
     if (!target)
       // O (and maybe others) have most likely become obsolete
       removeObsolete(L, BB, PDT);
+
+    delete PDT;
   }
-  delete PDT;
 }
 bool LoopPeel::runOnLoop(Loop *L, LPPassManager &LPM) {
   Function *F = L->getHeader()->getParent();
   LLVMContext &C = getGlobalContext();
   typedef std::map<const BasicBlock*, BasicBlock*> bbmap_t;
 
+  dbgs() << "runOnLoop:";
   L->dump();
 
 #if 0
@@ -838,17 +933,18 @@ bool LoopPeel::runOnLoop(Loop *L, LPPassManager &LPM) {
       convertCalls(newBB, BB, Chain, CallMap);
       const Instruction *TI = BB->getTerminator();
       assert(!isa<ReturnInst>(TI));
-      const BranchInst *BI = dyn_cast<BranchInst>(TI);
-      assert(BI);
-      Instruction *I = BI->clone();
+      assert(isa<BranchInst>(TI) || isa<SwitchInst>(TI));
+      Instruction *I = TI->clone();
       BOOST_FOREACH(Use &U, std::make_pair(I->op_begin(), I->op_end())) {
         if (BasicBlock *dst = dyn_cast<BasicBlock>(U.get())) {
           BasicBlock *mappedDst = dst;
           if (Lmap.count(dst))
             mappedDst = Lmap[dst]; // stays inside the cloned loop
           U.set(mappedDst);
+        } else if (isa<Constant>(U.get())) {
+          // nothing
         } else {
-          U.set(UndefValue::get(bld.getInt1Ty()));
+          U.set(UndefValue::get(U.get()->getType()));
         }
       }
       newBB->getInstList().push_back(I);
