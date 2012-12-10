@@ -9,6 +9,7 @@
 
 #define DEBUG_TYPE "sca"
 #include "llvm/ADT/SCCIterator.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/CallSSA.h"
 #include "llvm/Analysis/StackCache.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -25,6 +26,11 @@
 using namespace llvm;
 using namespace cssa;
 using namespace boost;
+
+STATISTIC(CallSitesCallExt,      "Number call sites that cannot be analyzed");
+STATISTIC(CallSitesGood,         "Number call sites that can be analyzed");
+STATISTIC(CallSitesRec,          "Number call sites to recursive");
+STATISTIC(CallSitesOmitted,      "Number call sites omitted (in recursive)");
 
 namespace {
   enum StackCacheSettings {
@@ -213,7 +219,7 @@ ModulePass *llvm::createStackCacheAnalysisPass(SCStackInfo *SCSI) {
 
 bool StackCacheAnalysis::runOnModule(Module &M) {
 
-  if (true) {
+  if (false) {
     runTests(M);
     return false;
   }
@@ -231,6 +237,12 @@ bool StackCacheAnalysis::runOnModule(Module &M) {
 
   if (!complete) {
     errs() << "StackCacheAnalysis: incomplete call-ssa, aborting\n";
+    return false;
+  }
+
+  if (true) {
+    dbgs() << " CG ANALYSIS\n";
+    runTests(M);
     return false;
   }
 
@@ -807,7 +819,18 @@ void StackCacheAnalysis::antest(const graph_t &G) {
   glob.work();
 }
 
+namespace llvm {
+raw_ostream &operator<<(raw_ostream &OS, const CallGraphNode &CGN) {
+  if (Function *F = CGN.getFunction())
+    OS << "Call graph node for function: '" << F->getName() << "'";
+  else
+    OS << "Call graph node <<null function>>";
+  return OS;
+}
+}
+
 void StackCacheAnalysis::runTests(Module &M) {
+#if 0
   SCStackInfo::ssmap_t &StackSizes = SCSI->StackSizes;
   for (Module::iterator I = M.begin(), E = M.end(); I != E; ++I) {
     if (I->isDeclaration())
@@ -833,6 +856,34 @@ void StackCacheAnalysis::runTests(Module &M) {
     Function *F = root->getFunction();
     assert(F);
     antest(getGraph(F));
+  }
+#endif
+  BOOST_FOREACH(CGN *cgn, Blacklist)
+    dbgs() << "blacklist: " << *cgn << "\n";
+
+  CallGraph& CG = getAnalysis<CallGraph>();
+  CGN *callsext = CG.getCallsExternalNode();
+  CGN *extcalling = CG.getExternalCallingNode();
+
+  for(CallGraph::iterator I = CG.begin(), E = CG.end(); I != E; ++I) {
+    CGN *cgn = I->second;
+    if (cgn == extcalling)
+      continue;
+    cgn->dump();
+
+    BOOST_FOREACH(const CallGraphNode::CallRecord &CR, *cgn) {
+      //dbgs() << "call to " << *CR.second << "\n";
+      if (Blacklist.count(cgn)) {
+        cgn->getFunction()->dump();
+        ++CallSitesOmitted;
+      }
+      else if (Blacklist.count(CR.second))
+        ++CallSitesRec;
+      else if (CR.second == callsext)
+        ++CallSitesCallExt;
+      else
+        ++CallSitesGood;
+    }
   }
 }
 
