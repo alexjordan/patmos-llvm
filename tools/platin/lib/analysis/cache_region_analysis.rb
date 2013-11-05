@@ -17,8 +17,11 @@ class CacheAnalysis
     @pml, @options, @refinement = pml, options, refinement
   end
 
+  def scope_graph
+    @scope_graph_ = ScopeGraph.new(entry_function, @refinement, @pml, @options) unless @scope_graph_
+    @scope_graph_
+  end
   def analyze(entry_function, ipet_builder)
-    scope_graph = ScopeGraph.new(entry_function, @refinement, @pml, @options)
     if mc = @pml.arch.method_cache
       mca = CacheRegionAnalysis.new(MethodCacheAnalysis.new(mc, @pml, @options), @pml, @options)
       mca.extend_ipet(scope_graph, ipet_builder)
