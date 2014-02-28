@@ -779,11 +779,24 @@ class StackCacheAnalysisGraphBased < StackCacheAnalysis
       #@mc_model.ipet.add_variable(node.id, :sca)
     }
     @pml.sca_graph.edges.each { |edge|
+      puts "edge: #{edge}"
       srcn = @nodes[edge.src]
       dstn = @nodes[edge.dst]
       f = srcn.function
-      bb = f.blocks.find { |bb| bb.data['mapsto'] == edge.block }
-      cs = bb.instructions[edge.inst]
+      cs = nil
+      # XXX should rather enumerate instructions in f
+      catch (:found) do
+        iis = f.blocks.each { |bb|
+          bb.instructions.each { |i|
+            if i.callid == edge.inst
+              cs = i
+              throw :found
+            end
+          }
+        }
+      end
+      #bb = f.blocks.find { |bb| bb.data['mapsto'] == edge.block }
+      #cs = bb.instructions.select{ |i| i.calls? }[edge.inst] # n-th call in block
       assert("not a call: #{cs}") { cs.calls? }
       next unless ilp.has_variable?(IPETEdge.new(cs, dstn.function, :machinecode))
       debug(@options, :cache) { "sca edge for cs #{cs} and callees #{cs.callees}" }

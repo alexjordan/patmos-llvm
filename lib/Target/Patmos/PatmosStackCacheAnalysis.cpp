@@ -664,8 +664,9 @@ namespace llvm {
       Name Dst;
       Name CallBlock;
       Name CallIndex;
-      SCAEdge(Name src, Name dst, Name bb, unsigned idx)
-        : Src(src), Dst(dst), CallBlock(bb), CallIndex(idx) {}
+      Name CallBlocki;
+      SCAEdge(Name src, Name dst, Name bb, unsigned idx, unsigned i)
+        : Src(src), Dst(dst), CallBlock(bb), CallIndex(idx), CallBlocki(i) {}
     };
     template <>
       struct MappingTraits<SCAEdge*> {
@@ -674,6 +675,7 @@ namespace llvm {
           io.mapRequired("src", e->Src);
           io.mapRequired("dst", e->Dst);
           io.mapRequired("callblock", e->CallBlock);
+          io.mapRequired("callblocki", e->CallBlocki);
           io.mapRequired("callindex", e->CallIndex);
         }
       };
@@ -688,7 +690,7 @@ namespace llvm {
       }
       void addEdge(SCANode *src, SCANode *dst,
           const MachineBasicBlock *MBB, unsigned index) {
-        E.push_back(new SCAEdge(src->yId, dst->yId, MBB->getName(), index));
+        E.push_back(new SCAEdge(src->yId, dst->yId, MBB->getName(), index, MBB->getNumber()));
       }
     };
 
@@ -2133,14 +2135,18 @@ namespace llvm {
     }
 
     void mapIndices(MachineFunction &MF) {
+      PatmosStackCacheAnalysisInfo *info =
+       &getAnalysis<PatmosStackCacheAnalysisInfo>();
+      unsigned Index = 0;
       for (MachineFunction::iterator BB = MF.begin(), E = MF.end(); BB != E; ++BB)
       {
-        unsigned Index = 0;
         for (MachineBasicBlock::instr_iterator Ins = BB->instr_begin(),
              E = BB->instr_end(); Ins != E; ++Ins)
         {
-          if (Ins->isPseudo()) continue;
-          MiMap[Ins] = std::make_pair(BB, Index++);
+          if (Ins->isCall()) {
+            info->CallIDs[Ins] = Index;
+            MiMap[Ins] = std::make_pair(BB, Index++);
+          }
         }
       }
     }
@@ -2164,9 +2170,11 @@ namespace llvm {
         SCAEdgeSet &e = n->getChildren();
         for (SCAEdgeSet::iterator I = e.begin(), E = e.end(); I != E; ++I) {
           MInstrIndex::iterator it = MiMap.find(I->getSite()->getMI());
-          assert(it != MiMap.end());
+          int cidx = -1;
+          if (it != MiMap.end())
+            cidx = it->second.second;
           YDoc.SCAG.addEdge(I->getCaller(), I->getCallee(),
-              it->second.first, it->second.second);
+              it->second.first, cidx);
         }
 
       }

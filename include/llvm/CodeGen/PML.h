@@ -274,11 +274,12 @@ struct MachineInstruction : Instruction {
   Name MemType;
 
   bool Bundled;
+  int CallID;
 
   MachineInstruction(uint64_t Index)
   : Instruction(Index), Size(0), Address(-1), BranchType(branch_none),
     BranchDelaySlots(0), StackCacheArg(0), StackCacheFill(0), StackCacheSpill(0),
-    MemType(Name("")), Bundled(false) {}
+    MemType(Name("")), Bundled(false), CallID(-1) {}
 };
 template <>
 struct MappingTraits<MachineInstruction*> {
@@ -300,6 +301,7 @@ struct MappingTraits<MachineInstruction*> {
     io.mapOptional("memmode",   Ins->MemMode, memmode_none);
     io.mapOptional("memtype",   Ins->MemType, Name(""));
     io.mapOptional("bundled",       Ins->Bundled, false);
+    io.mapOptional("callid",   Ins->CallID, -1);
   }
   static const bool flow = true;
 };

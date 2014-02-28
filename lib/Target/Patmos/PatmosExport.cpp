@@ -549,6 +549,12 @@ namespace llvm {
           assert(it != SCA->Reserves.end());
           I->StackCacheSpill = it->second;
         }
+        if (Instr->isCall()) {
+          PatmosStackCacheAnalysisInfo::CallMap::iterator it =
+            SCA->CallIDs.find(Instr);
+          assert(it != SCA->CallIDs.end());
+          I->CallID = it->second;
+        }
       }
 
       if (!Instr->isInlineAsm() && (Instr->mayLoad() || Instr->mayStore())) {

@@ -699,6 +699,10 @@ module PML
       data['stack-cache-spill']
     end
 
+    def callid
+      data['callid']
+    end
+
     def memmode
       data['memmode']
     end
