@@ -17,9 +17,10 @@
 #undef PATMOS_TRACE_BB_LIVEAREA
 #undef PATMOS_TRACE_CG_OCCUPANCY
 #undef PATMOS_TRACE_CG_OCCUPANCY_ILP
-#undef PATMOS_TRACE_WORST_SITE_OCCUPANCY
+#define PATMOS_TRACE_WORST_SITE_OCCUPANCY // trace during computation
+#undef PATMOS_DUMP_WORST_SITE_OCCUPANCY // dump results
 #undef PATMOS_TRACE_PATH_OCCUPANCY
-#undef PATMOS_TRACE_DETAILED_RESULTS
+#define PATMOS_TRACE_DETAILED_RESULTS
 
 #include "Patmos.h"
 #include "PatmosCallGraphBuilder.h"
@@ -40,6 +41,7 @@
 #include <map>
 #include <set>
 #include <fstream>
+#include <sstream>
 
 /// Utility for deleting owned members of an object
 #define DELETE_MEMBERS(vec) \
@@ -94,6 +96,13 @@ static cl::opt<bool> EnableEnsureOpt(
   cl::desc("Remove unnecessary ensure instructions during Stack Cache Analysis."),
   cl::Hidden);
 
+/// EnableEnsureOpt - Option to enable lazy pointer analysis
+static cl::opt<bool> EnableLazyPointer(
+  "mpatmos-sca-lp",
+  cl::init(false),
+  cl::desc("Enable lazy pointer (spill-cost-saving) analysis."),
+  cl::Hidden);
+
 /// RootOccupied - Debug option: start with fully occupied root node
 static cl::opt<bool> RootOccupied(
   "mpatmos-sca-root-occupied",
@@ -141,6 +150,12 @@ namespace llvm {
   /// Count the total number of functions (excluding dead functions).
   STATISTIC(Functions, "Number of machine functions.");
 
+  /// Count the number of stores considered during lazy pointer analysis.
+  STATISTIC(StoresAnalyzed, "Number of stores analyzed (LP analysis).");
+
+  /// Count the number of stores ignored during lazy pointer analysis.
+  STATISTIC(StoresIgnored, "Number of stores ignored (LP analysis).");
+
   /// Prefixes for ILP variable names
   enum ilp_prefix {
     T,
@@ -148,6 +163,21 @@ namespace llvm {
     W,
     OF,
     X
+  };
+
+  /// Spill cost helper
+  struct CostPair {
+    unsigned int Cost;      // Default spill cost
+    unsigned int LPOptCost; // Spill cost optimized by LP analysis
+
+    /// Construct spill cost pair
+    explicit CostPair(unsigned int c, unsigned int clp) :
+      Cost(c), LPOptCost(clp) {}
+    /// Implicitly construct spill cost pair without lazy-pointer-optimized
+    /// cost.
+    CostPair(unsigned int c) :
+      Cost(c), LPOptCost(c) {}
+    unsigned int get() const { return EnableLazyPointer ?  LPOptCost : Cost; }
   };
 
   // forward definition.
@@ -218,7 +248,7 @@ namespace llvm {
 
     /// Number of bytes occupied in the stack cache before entering the 
     /// function.
-    unsigned int Occupancy;
+    CostPair Occupancy;
 
     /// The maximum stack occupancy of the node.
     /// \see PatmosStackCacheAnalysis::computeMinMaxOccupancy
@@ -229,7 +259,7 @@ namespace llvm {
     unsigned int RemainingOccupancy;
 
     /// Cost associated with spilling at this node.
-    unsigned int SpillCost;
+    CostPair SpillCost;
 
     /// Flag indicating whether the CFG of the corresponding function contains
     /// a path without calls.
@@ -245,14 +275,14 @@ namespace llvm {
     bool IsVisible;
 
     /// Flag indicating whether this node is valid. A node is valid when a path
-    /// from the root node to the node exists that fits into the root node's 
+    /// from the root node to the node exists that fits into the root node's
     /// maximum occupancy (which is not limited by the stack cache size).
     bool IsValid;
   public:
-    SCANode(MCGNode *node, unsigned int occupancy, unsigned int maxoccupancy,
-            unsigned int spillcost, bool hascallfreepath) :
-        Node(node), Occupancy(occupancy), MaxOccupancy(maxoccupancy), 
-        RemainingOccupancy(0), SpillCost(spillcost), 
+    SCANode(MCGNode *node, const CostPair &occupancy, unsigned int maxoccupancy,
+            const CostPair &spillcost, bool hascallfreepath) :
+        Node(node), Occupancy(occupancy), MaxOccupancy(maxoccupancy),
+        RemainingOccupancy(0), SpillCost(spillcost),
         HasCallFreePath(hascallfreepath), IsVisible(false), IsValid(false)
     {}
 
@@ -262,7 +292,7 @@ namespace llvm {
         yFunction = Node->getMF()->getName();
       else
         yFunction = "none";
-      ySpillBlocks = SpillCost; // export in bytes
+      ySpillBlocks = SpillCost.get(); // export in bytes
     }
 
     /// Returns the associated call graph node.
@@ -274,13 +304,13 @@ namespace llvm {
     /// Return the stack cache occupancy associated with the node.
     unsigned int getOccupancy() const
     {
-      return Occupancy;
+      return Occupancy.get();
     }
 
     /// Return the spill cost associated with the node.
     unsigned int getSpillCost() const
     {
-      return SpillCost;
+      return SpillCost.get();
     }
 
     /// Return the remaining occupancy wrt. the root node's maximum stack
@@ -302,6 +332,10 @@ namespace llvm {
     {
       return MaxOccupancy;
     }
+
+    /// Used for trace output
+    CostPair getSpillCostPair() const { return SpillCost; }
+    CostPair getOccupancyPair() const { return Occupancy; }
 
     /// Return whether the node's CFG contains at least one call-free path.
     bool hasCallFreePath() const
@@ -422,21 +456,24 @@ namespace llvm {
     /// makeNode - Construct a new SCA node or return an already existing one.
     /// Returns true when the node was newly created, false otherwise. The node
     /// itself is returned using the argument result.
-    bool makeNode(MCGNode *node, unsigned int occupancy, unsigned int spillcost,
-                  unsigned int maxoccupancy, bool hascallfreepath,
-                  SCANode *&result)
+    bool makeNode(MCGNode *node, const CostPair &occupancy,
+                  const CostPair &spillcost, unsigned int maxoccupancy,
+                  bool hascallfreepath, SCANode *&result)
     {
-      MCGSCANodeMap::iterator tmp(Nodes.find(std::make_pair(node, occupancy)));
+      MCGSCANodeMap::iterator tmp(Nodes.find(
+          std::make_pair(node, occupancy.get())));
 
       result = NULL;
       if (tmp == Nodes.end()) {
+        dbgs() << "makeNode[" << yamlId << "]: " << *node
+          << " spill=" << spillcost.get() << " occ=" << occupancy.get() << "\n";
         // create a new node
         result = new SCANode(node, occupancy, maxoccupancy, spillcost,
                              hascallfreepath);
         result->yId = yaml::Name(yamlId++);
 
         // store the newly created node
-        Nodes[std::make_pair(node, occupancy)] = result;
+        Nodes[std::make_pair(node, occupancy.get())] = result;
 
         return true;
       }
@@ -744,8 +781,26 @@ namespace llvm {
     /// Map call graph nodes to an unsigned integer.
     typedef std::map<MCGNode*, unsigned int> MCGNodeUInt;
 
+    struct MCGSiteCompare {
+      bool operator()(const MCGSite *lhs, const MCGSite *rhs) const {
+        if (lhs->getCaller() < rhs->getCaller())
+          return true;
+        if (lhs->getCaller() > rhs->getCaller())
+          return false;
+        if (lhs->getMI() < rhs->getMI())
+          return true;
+        if (lhs->getMI() > rhs->getMI())
+          return false;
+        if (lhs->getCallee() < rhs->getCallee())
+          return true;
+        //if (lhs->getCallee() > rhs->getCallee())
+        return false;
+      }
+    };
+
     /// Map call sites to an unsigned integer.
     typedef std::map<MCGSite*, unsigned int> MCGSiteUInt;
+    typedef std::map<MCGSite*, unsigned int, MCGSiteCompare> MCGSiteUIntSort;
 
     /// List of ensures and their effective sizes.
     typedef std::map<MachineInstr*, unsigned int> SIZEs;
@@ -762,6 +817,10 @@ namespace llvm {
     /// Track the worst-case stack occupancy before every call site, assuming
     /// a full stack cache on function entry.
     MCGSiteUInt WorstCaseSiteOccupancy;
+
+    /// Track the worst-case stack occupancy before every call site, assuming
+    /// a full stack cache on function entry.
+    MCGSiteUInt WorstCaseSpillDirty;
 
     /// Track functions with call-free paths in them.
     MCGNodeBool IsCallFree;
@@ -831,7 +890,7 @@ namespace llvm {
 
     /// getBytesReserved - Get the number of bytes reserved at the entry of a
     /// call graph node. Returns 0 for UNKNOWN nodes.
-    unsigned int getBytesReserved(const MCGNode *Node)
+    unsigned int getBytesReserved(const MCGNode *Node) const
     {
       if (Node->isUnknown())
         return 0;
@@ -1786,6 +1845,87 @@ namespace llvm {
       }
     }
 
+    void propagateLPSaving(MBBs &WL, MBBUInt &INs,
+                           MCGNode *Node,
+                           MachineBasicBlock *MBB)
+    {
+      unsigned int worstSpillDirty = INs[MBB];
+      unsigned int SCSize = STC.getStackCacheSize();
+      unsigned int Reserved = getBytesReserved(Node);
+
+      // propagate the worst-case stack occupancy through the basic block
+      for(MachineBasicBlock::instr_iterator i(MBB->instr_begin()),
+          ie(MBB->instr_end()); i != ie; i++) {
+        if (i->isCall()) {
+          // find call site
+          MCGSite *site = Node->findSite(i);
+          assert(site);
+
+          // store the worst-case occupancy before the call site, i.e., for the
+          // functions potentially entered through calls from this site
+          WorstCaseSpillDirty[site] = worstSpillDirty;
+
+          if (!TII.isPredicated(i)) {
+            unsigned int minDisplacement = getMinOccupancy(site->getCallee());
+
+            // update the worst-case occupancy
+            worstSpillDirty = std::min(worstSpillDirty, SCSize -
+                                       std::min(SCSize, minDisplacement));
+
+#ifdef PATMOS_TRACE_WORST_SITE_OCCUPANCY
+            if (minDisplacement)
+              dbgs() << "LP-disp[" << *site->getCallee() << "](" << minDisplacement
+                << "), new dirty: " << worstSpillDirty << "\n";
+#endif
+          }
+        } else {
+          unsigned int scale = 1;
+          switch(i->getOpcode()) {
+          case Patmos::SWS:
+            scale = 2;
+          case Patmos::SHS:
+            scale <<= 1;
+          case Patmos::SBS:
+            // no LP-preserved region that could be altered by a store
+            if (worstSpillDirty >= Reserved) {
+              ++StoresIgnored;
+              continue;
+            }
+
+            unsigned B = i->getOperand(2).getReg();
+            if (i->getOperand(3).isImm() && B == Patmos::R0) {
+              unsigned int bytes = scale * (i->getOperand(3).getImm() + 1);
+#ifdef PATMOS_TRACE_WORST_SITE_OCCUPANCY
+              i->dump();
+              dbgs() << worstSpillDirty << ".."
+                << "([" << i->getOperand(3).getImm() << "],"
+                << bytes <<   ") => "
+                << std::max(worstSpillDirty, bytes) << "\n";
+#endif
+              worstSpillDirty = std::max(worstSpillDirty, bytes);
+            } else
+              worstSpillDirty = Reserved;
+
+            ++StoresAnalyzed;
+            break;
+          }
+        }
+      }
+
+      // propagate to CFG successors
+      for(MachineBasicBlock::succ_iterator i(MBB->succ_begin()),
+          ie(MBB->succ_end()); i != ie; i++) {
+        // propagate worst-case value and put successors on the work list
+        if (INs.find(*i) == INs.end()) {
+          INs[*i] = worstSpillDirty;
+          WL.insert(*i);
+        } else if (INs[*i] < worstSpillDirty) {
+          INs[*i] = worstSpillDirty;
+          WL.insert(*i);
+        }
+      }
+    }
+
     /// propagateWorstCaseOccupancyAtSite - Propagate, locally within a
     /// function, the worst-case stack occupancy at call sites.
     ///
@@ -1801,11 +1941,12 @@ namespace llvm {
       for(MCGNodes::const_iterator i(nodes.begin()), ie(nodes.end()); i != ie;
           i++) {
         if ((*i)->isUnknown()) {
-          // ensure that incoming values later, when the call graph is processed 
+          // ensure that incoming values later, when the call graph is processed
           // globally, are simply propagated onward through UNKNOWN nodes
           for(MCGSites::const_iterator j((*i)->getSites().begin()),
               je((*i)->getSites().end()); j != je; j++) {
             WorstCaseSiteOccupancy[*j] = STC.getStackCacheSize();
+            WorstCaseSpillDirty[*j] = STC.getStackCacheSize();
           }
         }
         else if (!(*i)->isDead()) {
@@ -1827,20 +1968,78 @@ namespace llvm {
             // its successors on the work list.
             propagateWorstCaseOccupancyAtSite(WL, INs, *i, MBB);
           }
-
-#ifdef PATMOS_TRACE_WORST_SITE_OCCUPANCY
-          DEBUG(
-            dbgs() << "\\\\\\\\\\\\\\\\\\\\\\\\\\\\ "
-                   << MF->getFunction()->getName()
-                   << " (" << getBytesReserved(*i) << ")\n";
-            for(MCGSiteUInt::const_iterator j(WorstCaseSiteOccupancy.begin()),
-                je(WorstCaseSiteOccupancy.end()); j != je; j++) {
-              dbgs() << "  " << *j->first << ": " << j->second
-                     << " (" << getMinOccupancy(j->first->getCallee()) << ")\n";
-            }
-          );
-#endif // PATMOS_TRACE_WORST_SITE_OCCUPANCY
+//#ifdef PATMOS_TRACE_WORST_SITE_OCCUPANCY
+//          DEBUG(
+//            dbgs() << "\\\\\\\\\\\\\\\\\\\\\\\\\\\\ "
+//                   << MF->getFunction()->getName()
+//                   << " (" << getBytesReserved(*i) << ")\n";
+//            dumpOccupancy();
+//          );
+//#endif // PATMOS_TRACE_WORST_SITE_OCCUPANCY
         }
+      }
+
+      // lazy pointer analysis: visit all functions again
+      for(MCGNodes::const_iterator i(nodes.begin()), ie(nodes.end()); i != ie;
+          i++) {
+        if ((*i)->isDead() || (*i)->isUnknown())
+          continue;
+
+        MBBs WL;
+        MBBUInt INs;
+        MachineFunction *MF = (*i)->getMF();
+
+        // initialize work list.
+        INs[MF->begin()] = STC.getStackCacheSize();
+        WL.insert(MF->begin());
+
+        dbgs() << "\\\\\\\\\\\\\\\\\\\\\\\\\\\\ "
+               << MF->getFunction()->getName()
+               << " (" << getBytesReserved(*i) << ")\n";
+
+        // process until the work list becomes empty
+        while (!WL.empty()) {
+          // get some basic block
+          MachineBasicBlock *MBB = *WL.begin();
+          WL.erase(WL.begin());
+
+          // update the basic block's information, potentially putting any of
+          // its successors on the work list.
+          propagateLPSaving(WL, INs, *i, MBB);
+        }
+      }
+
+#ifdef PATMOS_DUMP_WORST_SITE_OCCUPANCY
+      dumpOccupancy();
+      if (EnableLazyPointer) {
+        dbgs() << "sca-anastores:"
+          << StoresAnalyzed << "," << StoresIgnored << "\n";
+      }
+#endif // PATMOS_DUMP_WORST_SITE_OCCUPANCY
+    }
+
+    void dumpOccupancy() const {
+      MCGSiteUIntSort Sorted(WorstCaseSiteOccupancy.begin(), WorstCaseSiteOccupancy.end());
+      for(MCGSiteUInt::const_iterator j(Sorted.begin()),
+          je(Sorted.end()); j != je; j++) {
+        unsigned int Displacement = getMinOccupancy(j->first->getCallee());
+        std::stringstream SpillDirty; // worst-case lazy-pointer saving
+        MCGSiteUInt::const_iterator it = WorstCaseSpillDirty.find(j->first);
+        assert(it != WorstCaseSpillDirty.end());
+        if (it == WorstCaseSpillDirty.end())
+          SpillDirty << "*";
+        else
+          SpillDirty << it->second;
+        MachineFunction *MF = j->first->getCaller()->getMF();
+
+        dbgs() << *j->first << ": " << j->second  // worst-case max occupancy
+          << "/" << SpillDirty.str()
+          << " (" << Displacement
+          << "); sca-occ:"
+          << (MF ? MF->getName() : "unknown") << ","
+          << getBytesReserved(j->first->getCaller()) << ","
+          << j->second << "," << Displacement << "," << SpillDirty.str()
+          << "\n";
       }
     }
 
@@ -1876,10 +2075,10 @@ namespace llvm {
       }
     }
 
-    /// pruneSCAGraph - Hide nodes in the graph that are not relevant for the
-    /// analysis, i.e., those that neither spill nor lead to a context that
-    /// spills, or that do not lead to a valid stack cache state.
-    void pruneSCAGraph()
+    /// markSCAGraphVisible - Marks cost-relevant nodes in the graph.
+    /// Other nodes, i.e., those that neither spill nor lead to a context that
+    /// spills, or that do not lead to a valid stack cache state, can be pruned.
+    void markSCAGraphVisible()
     {
       const MCGSCANodeMap &nodes(SCAGraph.getNodes());
 
@@ -1971,7 +2170,7 @@ namespace llvm {
 
         // compute the occupancy and the call site
         unsigned int siteOccupancy = std::min(nodeOccupancy,
-                                               worstSiteOccupancy);
+                                              worstSiteOccupancy);
 
         // compute the occupancy after the child's reserve
         unsigned int childOccupancy = getBytesReserved(callee) +
@@ -1982,9 +2181,34 @@ namespace llvm {
             childOccupancy <= STC.getStackCacheSize() ? 0 :
                                   childOccupancy - STC.getStackCacheSize();
 
+        // compute again only considering dirty spill region below lazy pointer
+        //assert(WorstCaseSpillDirty.count(site));
+        unsigned int lpWorstSiteOccupancy = STC.getStackCacheSize();
+        if (WorstCaseSpillDirty.count(site))
+          lpWorstSiteOccupancy = WorstCaseSpillDirty[site];
+
+
+        unsigned int lpSiteOccupancy = std::min(nodeOccupancy,
+                                                lpWorstSiteOccupancy);
+
+
+        unsigned int lpChildOccupancy = getBytesReserved(callee) +
+                                              lpSiteOccupancy;
+
+        unsigned int lpSpillCost =
+            lpChildOccupancy <= STC.getStackCacheSize() ? 0 :
+                                    lpChildOccupancy - STC.getStackCacheSize();
+
+        // occupancy and cost pair
+        CostPair OccP(siteOccupancy, lpSiteOccupancy);
+        CostPair SCP(spillCost, lpSpillCost);
+
+        assert(lpChildOccupancy <= childOccupancy);
+        assert(lpSpillCost <= spillCost);
+
         // the occupancy before child's reserve (and spill cost) is propagated
         SCANode *calleeSCANode;
-        bool isNewNode = SCAGraph.makeNode(callee, siteOccupancy, spillCost,
+        bool isNewNode = SCAGraph.makeNode(callee, OccP, SCP,
                                            getMaxOccupancy(callee),
                                            IsCallFree[callee], calleeSCANode);
 
@@ -2032,8 +2256,8 @@ namespace llvm {
         }
       }
 
-      // prune graph, i.e., hide nodes not relevant for the analysis
-      pruneSCAGraph();
+      // mark cost-relevant nodes; nodes not relevant for analysis remain hidden
+      markSCAGraphVisible();
 
       const MCGSCANodeMap &nodes(SCAGraph.getNodes());
 #ifdef PATMOS_TRACE_DETAILED_RESULTS
@@ -2043,8 +2267,19 @@ namespace llvm {
           MCGNode *N = i->first.first;
           dbgs() << "CTXT: " << N->getMF()->getFunction()->getName()
                 << ": k=" << getBytesReserved(N)
-                << ", s=" << i->second->getSpillCost()
-                << ", o=" << i->first.second << "\n";
+                << ", s=" << i->second->getSpillCostPair().Cost
+                << ", slp=" << i->second->getSpillCostPair().LPOptCost
+                << ", o=" << i->first.second << "; ";
+          dbgs() << "sca-ctxt:"
+            << N->getMF()->getFunction()->getName() << ","
+            << i->second->getSpillCost();
+          SCAEdgeSet P = i->second->getParents();
+          for(SCAEdgeSet::const_iterator j(P.begin()), je(P.end());
+              j != je; j++) {
+            dbgs() << "," <<
+              j->getCaller()->getMCGNode()->getMF()->getFunction()->getName();
+          }
+          dbgs() << "\n";
         }
       }
 #endif // PATMOS_TRACE_DETAILED_RESULTS
