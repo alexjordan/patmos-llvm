@@ -320,6 +320,10 @@ namespace llvm {
     // make a call graph node, also for functions that are never called.
     MCGNode *MCGN = MCG.makeMCGNode(MF);
 
+#ifdef LINK_MAIN
+    MachineInstr *FinalAsm = NULL;
+#endif
+
     for(MachineFunction::iterator i(MF->begin()), ie(MF->end()); i != ie;
         i++) {
       for(MachineBasicBlock::instr_iterator j(i->instr_begin()),
@@ -354,9 +358,22 @@ namespace llvm {
           // construct a new call site
           MCG.makeMCGSite(MCGN, j,
                           MF ? MCG.makeMCGNode(MF) : MCG.getUnknownNode(T));
+
+#ifdef LINK_MAIN
+        } else if (j->isInlineAsm()) {
+          FinalAsm = j;
+#endif
         }
       }
     }
+
+#ifdef LINK_MAIN
+    if (MCGN->getLabel() == "_start") {
+      assert(FinalAsm);
+      MCG.makeMCGSite(MCGN, FinalAsm, getMCGNode(M, "main"));
+    }
+#endif
+
   }
 
   MCGNode *PatmosCallGraphBuilder::getMCGNode(const Module &M, const char *name)
