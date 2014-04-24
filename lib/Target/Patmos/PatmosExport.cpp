@@ -541,12 +541,16 @@ namespace llvm {
         if (Instr->getOpcode() == Patmos::SENSi) {
           PatmosStackCacheAnalysisInfo::FillSpillCounts::iterator it =
             SCA->Ensures.find(Instr);
-          assert(it != SCA->Ensures.end());
+          if (it == SCA->Ensures.end()) {
+            errs() << "ensure in " << MF.getName() << " not analyzed\n";
+          }
           I->StackCacheFill = it->second;
         } else if (Instr->getOpcode() == Patmos::SRESi) {
           PatmosStackCacheAnalysisInfo::FillSpillCounts::iterator it =
             SCA->Reserves.find(Instr);
-          assert(it != SCA->Reserves.end());
+          if (it == SCA->Reserves.end()) {
+            errs() << "reserve in " << MF.getName() << " not analyzed\n";
+          }
           I->StackCacheSpill = it->second;
         }
         if (Instr->isCall()) {

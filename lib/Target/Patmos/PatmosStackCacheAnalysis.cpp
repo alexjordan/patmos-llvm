@@ -911,6 +911,7 @@ namespace llvm {
       for(MCGSites::const_iterator i(callingSites.begin()),
           ie(callingSites.end()); i != ie; i++) {
         MCGNode *caller = (*i)->getCaller();
+        assert(caller->isDead() || SCCMap.count(caller));
         // do not consider dead functions and functions in the same SCC here
         if (!caller->isDead() && SCCMap[caller] != SCCMap[Node]) {
           const MCGNodes &predSCC(SCCMap[caller]->first);
@@ -962,6 +963,11 @@ namespace llvm {
           SCCMap[*n] = &SCCs.back();
         }
 
+      }
+      for(MCGNodes::const_iterator i(nodes.begin()), ie(nodes.end()); i != ie;
+            i++) {
+        if (!(*i)->isDead() && !SCCMap.count(*i))
+          dbgs() << "missing: " << **i << "\n";
       }
 
       // initialize the work list and successor counters
