@@ -41,11 +41,12 @@ class SimulatorTrace
     else
       begin
         needs_options(@options, :pasim)
-        pasim_options="--debug 0 --debug-fmt trace -b #{@elf}"
+        pasim_options="-b #{@elf}"
         cmd = "#{@options.pasim} #{arch.config_for_simulator.join(" ")} #{pasim_options} 2>&1 1>/dev/null"
         debug(@options, :patmos) { "Running pasim: #{cmd}" }
         IO.popen("#{cmd}") do |io|
           while item=parse(io.gets)
+            debug(@options, :trace) { "#{item.inspect}" }
             yield item
             @stats_num_items+=1
           end
@@ -61,7 +62,11 @@ class SimulatorTrace
   private
   def parse(line)
     return nil unless line and not line.chomp.empty?
-    pc, cyc = line.split(' ',2)
+    leader,callstring,stats = line.chomp("]\n").split(",", 3)
+    return nil unless leader.start_with?("[scspill")
+    return [callstring.split('::').map{ |c| c.split(':') }.map{ |a,n| [Integer(a),n.gsub(/[<>]/,'')] }, stats]
+    pc, cyc = line.split(' ')
+    #puts "pc/cyc: #{pc}/#{cyc}"
     begin
       [ Integer("0x#{pc}"), Integer(cyc) ]
     rescue Exception => e

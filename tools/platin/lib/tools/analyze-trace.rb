@@ -28,24 +28,24 @@ class AnalyzeTraceTool
       tm.subscribe(VerboseRecorder.new(DebugIO.new))
       "Starting trace analysis"
     }
-    @main_recorder = RecorderScheduler.new(@options.recorders, @entry)
-    tm.subscribe(@main_recorder)
+    #@main_recorder = RecorderScheduler.new(@options.recorders, @entry)
+    #tm.subscribe(@main_recorder)
     tm.run
 
-    if(@main_recorder.runs == 0)
-      die "Analysis entry '#{@options.analysis_entry}' (pc: #{@entry.address}) never executed"
-    end
-    @executed_blocks = @main_recorder.executed_blocks
-    @infeasible_functions = Set.new
-    @executed_blocks.each do |function,bset|
-      function.callsites.each do |cs|
-        next if cs.unresolved_call?
-        cs.callees.each do |callee|
-          f = @pml.machine_functions.by_label(callee)
-          @infeasible_functions.add(f) unless @executed_blocks[f]
-        end
-      end
-    end
+    #if(@main_recorder.runs == 0)
+    #  die "Analysis entry '#{@options.analysis_entry}' (pc: #{@entry.address}) never executed"
+    #end
+    #@executed_blocks = @main_recorder.executed_blocks
+    #@infeasible_functions = Set.new
+    #@executed_blocks.each do |function,bset|
+    #  function.callsites.each do |cs|
+    #    next if cs.unresolved_call?
+    #    cs.callees.each do |callee|
+    #      f = @pml.machine_functions.by_label(callee)
+    #      @infeasible_functions.add(f) unless @executed_blocks[f]
+    #    end
+    #  end
+    #end
     statistics("TRACE", "simulator trace length" => trace.stats_num_items) if @options.stats
   end
   def console_output
@@ -172,8 +172,8 @@ class AnalyzeTraceTool
     end
     tool = AnalyzeTraceTool.new(pml, options, entry)
     tool.analyze_trace
-    tool.console_output
-    tool.export_facts
+    #tool.console_output
+    #tool.export_facts
   end
 
 end
