@@ -21,9 +21,12 @@ namespace llvm {
   class BitVector;
   class PatmosSubtarget;
   class PatmosTargetMachine;
+  class AllocaAnalysis;
 
 class PatmosFrameLowering : public TargetFrameLowering {
 protected:
+  typedef DenseMap<unsigned, AllocaAnalysis*> AllocaInfoMap;
+
   const PatmosTargetMachine &TM;
   const PatmosSubtarget &STC;
 
@@ -31,7 +34,8 @@ protected:
   /// Currently this is only done for spill slots.
   /// @param SCFIs - should be set to true for all indices of frame objects
   ///                that should be assigned to the stack cache.
-  void assignFIsToStackCache(MachineFunction &MF, BitVector &SCFIs) const;
+  void assignFIsToStackCache(MachineFunction &MF, BitVector &SCFIs,
+                             AllocaInfoMap &AIM) const;
 
   /// assignFrameObjects - Fix the layout of the stack frame, assign FIs to
   /// either stack cache or shadow stack, and update all stack offsets.
@@ -53,6 +57,8 @@ protected:
   /// \see assignFIsToStackCache
   /// \see PatmosMachineFunctionInfo
   void patchCallSites(MachineFunction &MF) const;
+
+  void patchSCAccess(MachineFunction &MF, const AllocaAnalysis *ALA) const;
 public:
   explicit PatmosFrameLowering(const PatmosTargetMachine &tm);
 

@@ -507,13 +507,15 @@ PatmosII::MemType PatmosInstrInfo::getMemType(const MachineInstr *MI) const {
     while (II->isInsideBundle() && !II->mayLoad() && !II->mayStore()) {
       ++II;
     }
-    return getMemType(II);
+    return getMemType(II->getOpcode());
   }
+  return getMemType(MI->getOpcode());
+}
 
+PatmosII::MemType PatmosInstrInfo::getMemType(unsigned opc) const {
   // FIXME: Maybe there is a better way to get this info directly from
   //        the instruction definitions in the .td files
   using namespace Patmos;
-  unsigned opc = MI->getOpcode();
   switch (opc) {
     case LWS: case LHS: case LBS: case LHUS: case LBUS:
     case SWS: case SHS: case SBS:
@@ -531,7 +533,26 @@ PatmosII::MemType PatmosInstrInfo::getMemType(const MachineInstr *MI) const {
       return PatmosII::MEM_M;
     default: llvm_unreachable("Unexpected memory access instruction!");
   }
+}
 
+unsigned PatmosInstrInfo::getSCOpcode(unsigned opcode) const {
+  if (getMemType(opcode) == PatmosII::MEM_S)
+    return opcode;
+
+  switch (opcode)
+  {
+    case Patmos::LWC:  case Patmos::LWM:  opcode = Patmos::LWS; break;
+    case Patmos::LHC:  case Patmos::LHM:  opcode = Patmos::LHS; break;
+    case Patmos::LHUC: case Patmos::LHUM: opcode = Patmos::LHUS; break;
+    case Patmos::LBC:  case Patmos::LBM:  opcode = Patmos::LBS; break;
+    case Patmos::LBUC: case Patmos::LBUM: opcode = Patmos::LBUS; break;
+    case Patmos::SWC:  case Patmos::SWM:  opcode = Patmos::SWS; break;
+    case Patmos::SHC:  case Patmos::SHM:  opcode = Patmos::SHS; break;
+    case Patmos::SBC:  case Patmos::SBM:  opcode = Patmos::SBS; break;
+    default:
+      llvm_unreachable("Unexpected operation.");
+  }
+  return opcode;
 }
 
 bool PatmosInstrInfo::isPseudo(const MachineInstr *MI) const {
@@ -657,6 +678,16 @@ bool PatmosInstrInfo::hasRegUse(const MachineInstr *MI) const
     const MachineOperand &MO = MI->getOperand(i);
     if (MO.isReg() && MO.isUse() &&
         MO.getReg() != Patmos::NoRegister && MO.getReg() != Patmos::P0)
+      return true;
+  }
+  return false;
+}
+
+bool PatmosInstrInfo::hasStackFIUse(const MachineInstr *MI) const
+{
+  for (unsigned i = 0; i < MI->getNumOperands(); i++) {
+    const MachineOperand &MO = MI->getOperand(i);
+    if (MO.isFI())
       return true;
   }
   return false;

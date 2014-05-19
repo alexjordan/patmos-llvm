@@ -674,6 +674,9 @@ void MachineFrameInfo::print(const MachineFunction &MF, raw_ostream &OS) const{
       OS << "]";
     }
     OS << "\n";
+    if (SO.Alloca) {
+      OS << "  -- " << *SO.Alloca << "\n";
+    }
   }
 }
 

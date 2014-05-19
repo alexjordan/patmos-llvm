@@ -69,6 +69,9 @@ class PatmosInstrInfo : public PatmosGenInstrInfo {
   PatmosTargetMachine &PTM;
   const PatmosRegisterInfo RI;
   const PatmosSubtarget &PST;
+
+  // private helper
+  PatmosII::MemType getMemType(unsigned opc) const;
 public:
   explicit PatmosInstrInfo(PatmosTargetMachine &TM);
 
@@ -191,6 +194,10 @@ public:
   /// MI must be either a load or a store instruction.
   PatmosII::MemType getMemType(const MachineInstr *MI) const;
 
+  /// getSCOpcode - Return the stack-cache-typed equivalent of a memory access
+  /// (or the same opcode if it refers to the stack cache already).
+  unsigned getSCOpcode(unsigned opcode) const;
+
   /// isPseudo - check if the given machine instruction is emitted, i.e.,
   /// if the instruction is either inline asm or has some FU assigned to it.
   bool isPseudo(const MachineInstr *MI) const;
@@ -236,6 +243,9 @@ public:
 
   /// hasRegUse - Check if the given instruction uses any register.
   bool hasRegUse(const MachineInstr *MI) const;
+
+  /// hasStackFIUse - Check if instruction has frame index operand.
+  bool hasStackFIUse(const MachineInstr *MI) const;
 
   // getFirstMI - Return MI or the first 'real' instruction if MI is a bundle.
   const MachineInstr* getFirstMI(const MachineInstr *MI) const;
