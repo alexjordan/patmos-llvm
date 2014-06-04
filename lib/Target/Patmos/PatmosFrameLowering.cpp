@@ -70,18 +70,23 @@ public:
     Visited.push_back(I);
     return Base::visitPtr(*I);
   }
-  // XXX this might be a PtrUseVisitor issue.
+  // we can escape through a memcpy/memset
+  // XXX would be nice to know if it has been lowered to instructions
+  void visitMemIntrinsic(MemIntrinsic &I) {
+    PI.setEscapedAndAborted(&I);
+  }
   // we can escape through a var arg
+  // XXX this might be a PtrUseVisitor issue.
   void visitVAArgInst(VAArgInst &VAI) {
     PI.setEscapedAndAborted(&VAI);
   }
-  // XXX this might be a PtrUseVisitor issue.
   // don't stop at PHIs!
+  // XXX this might be a PtrUseVisitor issue.
   void visitPHINode(PHINode &PHI) {
     enqueueUsers(PHI);
   }
-  // XXX this might be a PtrUseVisitor issue.
   // select is similar to PHI!
+  // XXX this might be a PtrUseVisitor issue.
   void visitSelectInst(SelectInst &SI) {
     enqueueUsers(SI);
   }
