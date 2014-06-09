@@ -54,6 +54,7 @@ static cl::opt<bool> DisableAlloca("mpatmos-disable-alloca-on-sc",
                             cl::desc("Disable alloca stack cache allocation"));
 
 namespace llvm {
+  typedef std::vector<Value*> ValueSet_t;
 class AllocaAnalysis : public PtrUseVisitor<AllocaAnalysis> {
   typedef PtrUseVisitor<AllocaAnalysis> Base;
 public:
@@ -99,6 +100,45 @@ public:
     for (std::vector<Value*>::const_iterator I = Visited.begin(), E =
          Visited.end(); I != E; ++I)
       dbgs() << "  " << **I << "\n";
+  }
+};
+
+class ConflictingJoinAnalysis : public InstVisitor<ConflictingJoinAnalysis> {
+  ValueSet_t Visited;
+  std::pair<Instruction *, Value *> ConflictInfo;
+  typedef ValueSet_t::iterator ValIter;
+  typedef InstVisitor<ConflictingJoinAnalysis> Base;
+public:
+  ConflictingJoinAnalysis(const ValueSet_t VS)
+    : Visited(VS), ConflictInfo(std::make_pair<Instruction*, Value*>(0, 0)) {}
+  void setConflict(Instruction *I, Value *V) {
+    ConflictInfo = std::make_pair(I,V);
+  }
+  void visitPHINode(PHINode &PHI) {
+    for (unsigned i = 0, e = PHI.getNumIncomingValues(); i != e; ++i)
+      if (std::find(Visited.begin(), Visited.end(),
+                    PHI.getIncomingValue(i)) == Visited.end())
+        setConflict(&PHI, PHI.getIncomingValue(i));
+  }
+  void visitSelectInst(SelectInst &SI) {
+    if (std::find(Visited.begin(), Visited.end(),
+                  SI.getTrueValue()) == Visited.end())
+      setConflict(&SI, SI.getTrueValue());
+    else if (std::find(Visited.begin(), Visited.end(),
+                  SI.getFalseValue()) == Visited.end())
+      setConflict(&SI, SI.getFalseValue());
+  }
+  Instruction *getConflictingInst() const { return ConflictInfo.first; }
+  Value *getConflictingValue() const { return ConflictInfo.second; }
+  bool isConflicting() const { return ConflictInfo.first != NULL; }
+
+  template<class Iterator>
+  void run(Iterator Start, Iterator End) {
+    while (Start != End) {
+      Instruction *I =dyn_cast<Instruction>(*Start++);
+      if (I)
+        Base::visit(I);
+    }
   }
 };
 }
@@ -201,6 +241,19 @@ void PatmosFrameLowering::assignFIsToStackCache(MachineFunction &MF,
       } else {
         DEBUG(dbgs() << "PatmosSC: alloca does not escape: " << *AI << "\n");
         SCFIs[FI] = true;
+      }
+      // make sure that there is no PHI/Select-join with a ptr value that is
+      // not derived from this alloca.
+      // XXX this is too conservative, we consider joins with other non-escaping
+      // values always as conflicts
+      ConflictingJoinAnalysis CJA(ALA->Visited);
+      CJA.run(ALA->Visited.begin(), ALA->Visited.end());
+      if (CJA.isConflicting()) {
+        Instruction *MI = CJA.getConflictingInst();
+        DEBUG(dbgs() << "PatmosSC: alloca non-SC join @ " << *MI << "\n");
+        DEBUG(dbgs() << "PatmosSC: join val " << *CJA.getConflictingValue()
+              << "\n");
+        SCFIs[FI] = false;
       }
       // pass analysis info (+ ownership) to outside or delete it now
       if (SCFIs[FI])
