@@ -52,7 +52,8 @@ static cl::opt<bool> EnableBlockAlignedStackCache
 
 
 PatmosFrameLowering::PatmosFrameLowering(const PatmosTargetMachine &tm)
-: TargetFrameLowering(TargetFrameLowering::StackGrowsDown, 4, 0), TM(tm),
+: TargetFrameLowering(TargetFrameLowering::StackGrowsDown, /*align*/4,
+    /*LAO*/0, /*TransAl*/1, /*realign*/false), TM(tm),
   STC(tm.getSubtarget<PatmosSubtarget>())
 {
 }
@@ -191,6 +192,8 @@ unsigned PatmosFrameLowering::assignFrameObjects(MachineFunction &MF,
 
     // assigned to stack cache or shadow stack?
     if (SCFIs[FI]) {
+      assert(FIalignment == 4);
+
       // alignment
       unsigned int next_SCOffset = align(SCOffset, FIalignment);
 
